@@ -6,6 +6,9 @@ __pycache__/
 
 # Virtual Environment
 venv/
+backend/venv/
+backend/#/    #<-- add this
+backend/Create/ #<--- add this
 
 # IDE/Editor Specific
 .DS_Store  # macOS
@@ -14,5 +17,5 @@ Thumbs.db  # Windows
 .vscode/  # VS Code
 
 # Frontend Build Artifacts
-frontend/node_modules
-frontend/build
+frontend/node_modules/
+frontend/build/
