@@ -1,0 +1,18 @@
+# General
+.env
+__pycache__/
+*.pyc
+*.log
+
+# Virtual Environment
+venv/
+
+# IDE/Editor Specific
+.DS_Store  # macOS
+Thumbs.db  # Windows
+.idea/    # JetBrains IDEs (PyCharm, etc.)
+.vscode/  # VS Code
+
+# Frontend Build Artifacts
+frontend/node_modules
+frontend/build
