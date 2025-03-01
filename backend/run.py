@@ -1,4 +1,5 @@
-from app.api import create_app
+# backend/run.py
+from app import create_app  # Import from app, not app.api
 
 app = create_app()
 
