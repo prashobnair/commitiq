@@ -1,36 +1,61 @@
-from .api.github import get_user_pulls, get_user_issues, get_user_reviews, get_user_repos, get_repo_commits
 from flask import jsonify
 import os
 import requests
 from datetime import datetime
+
+def make_github_request(endpoint, headers=None):
+    """
+    Helper function to make GitHub API requests
+    """
+    if headers is None:
+        headers = {
+            'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
+        }
+    response = requests.get(endpoint, headers=headers)
+    return response.json() if response.status_code == 200 else {'error': f'API error: {response.status_code}'}, response.status_code
 
 def aggregate_user_data(username):
     """
     Aggregates data from multiple GitHub API endpoints for a given user.
     """
     try:
-        # Fetch data using the API functions (adapt to use Flask's `make_response` if needed)
-        pulls = get_user_pulls(username).get_json()
-        issues = get_user_issues(username).get_json()
-        reviews = get_user_reviews(username).get_json()
-        repos = get_user_repos(username).get_json()
+        # Base headers for GitHub API requests
+        headers = {
+            'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
+        }
+        
+        # Fetch data directly using requests instead of importing from github.py
+        pulls_url = f'https://api.github.com/search/issues?q=author:{username}+type:pr'
+        pulls_response = requests.get(pulls_url, headers=headers)
+        pulls = pulls_response.json() if pulls_response.status_code == 200 else {'error': f'API error: {pulls_response.status_code}'}
+        
+        issues_url = f'https://api.github.com/search/issues?q=author:{username}+type:issue'
+        issues_response = requests.get(issues_url, headers=headers)
+        issues = issues_response.json() if issues_response.status_code == 200 else {'error': f'API error: {issues_response.status_code}'}
+        
+        reviews_url = f'https://api.github.com/search/issues?q=reviewed-by:{username}+type:pr'
+        reviews_response = requests.get(reviews_url, headers=headers)
+        reviews = reviews_response.json() if reviews_response.status_code == 200 else {'error': f'API error: {reviews_response.status_code}'}
+        
+        repos_url = f'https://api.github.com/users/{username}/repos'
+        repos_response = requests.get(repos_url, headers=headers)
+        repos = repos_response.json() if repos_response.status_code == 200 else {'error': f'API error: {repos_response.status_code}'}
 
         # Error Handling
-        if isinstance(pulls, tuple) and 'error' in pulls[0]:
-            return {'error': f"Error fetching pulls: {pulls[0]['error']}"}, pulls[1]
-        if isinstance(issues, tuple) and 'error' in issues[0]:
-              return {'error': f"Error fetching issues: {issues[0]['error']}"}, issues[1]
-        if isinstance(reviews, tuple) and 'error' in reviews[0]:
-              return {'error': f"Error fetching reviews: {reviews[0]['error']}"}, reviews[1]
-        if isinstance(repos, tuple) and 'error' in repos[0]:
-            return {'error': f"Error fetching repos: {repos[0]['error']}"}, repos[1]
-
+        if isinstance(pulls, dict) and 'error' in pulls:
+            return {'error': f"Error fetching pulls: {pulls['error']}"}, 500
+        if isinstance(issues, dict) and 'error' in issues:
+              return {'error': f"Error fetching issues: {issues['error']}"}, 500
+        if isinstance(reviews, dict) and 'error' in reviews:
+              return {'error': f"Error fetching reviews: {reviews['error']}"}, 500
+        if isinstance(repos, dict) and 'error' in repos:
+            return {'error': f"Error fetching repos: {repos['error']}"}, 500
 
         # Aggregate data
-        num_merged_prs = sum(1 for pull in pulls if pull['merged'])
-        num_issues_created = len(issues) #Just count all issues
-        num_issues_resolved =  sum(1 for issue in issues if issue['state'] == 'closed')# Count all closed ones
-        num_code_reviews = len(reviews)
+        num_merged_prs = sum(1 for pull in pulls['items'] if pull['state'] == 'closed')
+        num_issues_created = len(issues['items']) #Just count all issues
+        num_issues_resolved =  sum(1 for issue in issues['items'] if issue['state'] == 'closed')# Count all closed ones
+        num_code_reviews = len(reviews['items'])
 
          # Initialize aggregated data with repo information
         aggregated_data = {
@@ -47,11 +72,9 @@ def aggregate_user_data(username):
          # Aggregate commit counts and other repo-level metrics
         for repo in repos:
                 repo_name = repo['name']
-                commits = get_repo_commits(username, repo_name)
-                if(not isinstance(commits, tuple)):
-                    commits = commits.get_json()
-                else:
-                    return{'error': f"Error fetching commits: {commits[0]['error']}"}, commits[1]
+                commits_url = f'https://api.github.com/repos/{username}/{repo_name}/commits'
+                commits_response = requests.get(commits_url, headers=headers)
+                commits = commits_response.json() if commits_response.status_code == 200 else {'error': f'API error: {commits_response.status_code}'}
                 num_commits = len(commits)
                 aggregated_data['total_commits'] += num_commits
 
@@ -60,7 +83,7 @@ def aggregate_user_data(username):
                 'url': repo['html_url'],
                 'stars': repo['stargazers_count'],
                 'forks': repo['forks_count'],
-                'num_contributors': len(requests.get(repo['contributors_url'], headers={'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}).json()),
+                'num_contributors': len(requests.get(repo['contributors_url'], headers=headers).json()),
                 'commit_frequency': calculate_commit_frequency(commits),  # Implement this helper function
                 'last_updated': repo['updated_at'],
                 'num_commits': num_commits # Add commit count for this repo
