@@ -3,7 +3,8 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-from ..services import aggregate_user_data, calculate_impact_score, calculate_overall_project_impact
+# Remove the circular import
+# from ..services import aggregate_user_data, calculate_impact_score, calculate_overall_project_impact
 
 github_bp = Blueprint('github', __name__)
 
@@ -170,18 +171,32 @@ def get_user_reviews(username):
 
 @github_bp.route('/analyze/<username>', methods=['GET'])
 def analyze_user(username):
-    aggregated_data = aggregate_user_data(username)
-     # Check if aggregation returned an error
-    if 'error' in aggregated_data:
-        return jsonify(aggregated_data), 500 if not isinstance(aggregated_data, tuple) else aggregated_data[1]
-
-    aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
-    impact_score = calculate_impact_score(aggregated_data)
-
-    # Include detailed repo data in the response
-    result = {
-        'impact_score': impact_score,
-        'analysis': aggregated_data
-    }
-
-    return jsonify(result)
+    """
+    Analyze a GitHub user's contributions and calculate impact scores.
+    """
+    # Import here to avoid circular imports
+    from ..services import aggregate_user_data, calculate_impact_score, calculate_overall_project_impact
+    
+    try:
+        # Get aggregated user data
+        aggregated_data = aggregate_user_data(username)
+        
+        # Check if there was an error
+        if isinstance(aggregated_data, tuple) and isinstance(aggregated_data[0], dict) and 'error' in aggregated_data[0]:
+            return jsonify(aggregated_data[0]), aggregated_data[1]
+        
+        # Calculate impact scores
+        impact_score = calculate_impact_score(aggregated_data)
+        
+        # Update project_impact in aggregated_data
+        aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
+        
+        # Structure the response to match what the frontend expects
+        result = {
+            'impact_score': impact_score,
+            'analysis': aggregated_data
+        }
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
