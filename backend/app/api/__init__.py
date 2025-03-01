@@ -1,19 +1,13 @@
-from flask import Flask
-from flask_cors import CORS
-from dotenv import load_dotenv
-import os
-from ..config import Config
-from ..api.github import github_bp  # Import the blueprint
+# backend/app/api/__init__.py
+from flask import Blueprint
 
-def create_app(config_class=Config):
-    app = Flask(__name__)
-    app.config.from_object(config_class)
-    CORS(app)  # Enable CORS for all routes
+# Import the individual blueprints
+from .github import github_bp
+from .analysis import analysis_bp  # Import the new blueprint
 
-    # Load environment variables
-    load_dotenv()
+# Create a master blueprint (optional, but good for organization)
+api_bp = Blueprint('api', __name__)
 
-    # Register blueprints
-    app.register_blueprint(github_bp, url_prefix='/api/github')  # Register the blueprint
-
-    return app
+# Register the individual blueprints with the master blueprint
+api_bp.register_blueprint(github_bp)
+api_bp.register_blueprint(analysis_bp, url_prefix='/github')

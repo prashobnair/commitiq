@@ -1,4 +1,6 @@
+# backend/app/config.py
+import os
+
 class Config:
-    # Your configuration settings here
-    DEBUG = True
+    GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
     # Add other configuration variables as needed
