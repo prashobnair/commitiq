@@ -519,6 +519,15 @@ def aggregate_user_data(username, async_data=None):
             if isinstance(repos, dict) and 'error' in repos:
                 return {'error': f"Error fetching repos: {repos['error']}"}
                 
+            # Add logging for debugging data structures
+            logging.debug(f"Pulls data type: {type(pulls)}, length: {len(pulls)}")
+            if pulls and len(pulls) > 0:
+                logging.debug(f"First pull request keys: {pulls[0].keys() if isinstance(pulls[0], dict) else 'not a dict'}")
+                
+            logging.debug(f"Repos data type: {type(repos)}, length: {len(repos)}")
+            if repos and len(repos) > 0:
+                logging.debug(f"First repo keys: {repos[0].keys() if isinstance(repos[0], dict) else 'not a dict'}")
+
             if isinstance(security_advisories, dict) and 'error' in security_advisories:
                 logging.warning(f"Error fetching security advisories: {security_advisories['error']}")
                 security_advisories = []  # Continue with empty list instead of failing
@@ -531,7 +540,7 @@ def aggregate_user_data(username, async_data=None):
             # ... existing code ...
 
             # Aggregate data
-            num_merged_prs = sum(1 for pull in pulls if pull['merged'])
+            num_merged_prs = sum(1 for pull in pulls if pull.get('merged', False))
             num_issues_created = len(issues)
             num_issues_resolved =  sum(1 for issue in issues if issue['state'] == 'closed')# Count all closed ones
             num_code_reviews = len(reviews)
@@ -696,10 +705,11 @@ def aggregate_user_data(username, async_data=None):
         except TooManyRedirects as e:
             return {'error': f"Too many redirects: {str(e)}"}
         except RequestException as e:  # Catch-all for other request exceptions
+            logger.error(f"Request error: {str(e)}")
             return {'error': f"Request error: {str(e)}"}
         except Exception as e:
             logging.exception(f"Unexpected error in aggregate_user_data: {str(e)}")
-            return {'error': f"An unexpected error occurred: {str(e)}"}, 500
+            return {'error': f"An unexpected error occurred: {str(e)}"}
 
 # Async version for parallel data fetching
 async def fetch_all_data(username):
@@ -993,7 +1003,14 @@ def calculate_overall_project_impact(aggregated_data: dict) -> float:
     """Calculate overall project impact based on individual repo impacts"""
     # Calculate overall project impact based on individual repo impacts
     total_impact = 0
-    for repo in aggregated_data['repos']:
+    
+    # Check if repos is a list before iterating
+    repos = aggregated_data.get('repos', [])
+    if not isinstance(repos, list):
+        logging.error(f"Expected repos to be a list, got {type(repos)}: {repos}")
+        return 0
+        
+    for repo in repos:
         is_original = not repo.get('fork',False) #check if the repo is forked.
         repo['impact_score'] = calculate_project_impact(repo, is_original)  # Calculate individual repo impact and pass is_original
         total_impact += repo['impact_score']
