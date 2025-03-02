@@ -28,29 +28,40 @@ def cache_response(ttl=3600):
     def decorator(func):
         @wraps(func)
         def wrapper(username, *args, **kwargs):
+            global redis_available  # Move global declaration to the beginning
+            
             # Create a cache key based on function name and arguments
             key = f"github:{func.__name__}:{username}"
             
-            # If Redis is available, use it for caching
+            # If Redis is available, try to get from cache
             if redis_available and r:
                 try:
+                    # Add connection check
+                    r.ping()
                     cached = r.get(key)
                     if cached:
                         logger.info(f"Cache hit for {key}")
                         return json.loads(cached)
-                    
-                    result = func(username, *args, **kwargs)
+                except (redis.ConnectionError, redis.RedisError) as e:
+                    logger.error(f"Redis error: {str(e)}")
+                    # Mark Redis as unavailable if connection fails
+                    redis_available = False
+            
+            # Execute the function if not in cache or Redis unavailable
+            result = func(username, *args, **kwargs)
+            
+            # Try to cache the result if Redis is available
+            if redis_available and r:
+                try:
                     # Only cache successful results (not error responses)
                     if not (isinstance(result, dict) and 'error' in result):
                         r.setex(key, ttl, json.dumps(result))
-                    return result
-                except Exception as e:
-                    logger.error(f"Redis error: {str(e)}")
-                    # Fall back to direct function call if Redis fails
-                    return func(username, *args, **kwargs)
-            else:
-                # If Redis is not available, fall back to direct function call
-                return func(username, *args, **kwargs)
+                except (redis.ConnectionError, redis.RedisError) as e:
+                    logger.error(f"Redis caching error: {str(e)}")
+                    # Mark Redis as unavailable if connection fails
+                    redis_available = False
+            
+            return result
         return wrapper
     return decorator
 
@@ -95,19 +106,23 @@ MAX_REVIEWS = 500
 BOT_IDENTIFIERS = ["[bot]", "dependabot"] # Used to filter the commits from bots
 
 # --- Helper Functions ---
-def is_bot(user_login: any) -> bool:
+def is_bot(user_data: any) -> bool:
     """Check if user is a bot account"""
-    if not user_login:
+    # Handle empty input
+    if not user_data:
         return False
+    
+    # Handle nested user objects
+    if isinstance(user_data, dict):
+        login = user_data.get('login', '')
+        user_type = user_data.get('type', '')
         
-    # Check if it's a string or a dictionary
-    if isinstance(user_login, dict):
-        # If it's a user object, extract the login
-        user_login = user_login.get('login', '')
-        
-        # Also check the 'type' field if available
-        if user_login.get('type') == 'Bot':
+        # Direct check for Bot type
+        if user_type == 'Bot':
             return True
+    else:
+        # If it's a string (username), use it directly
+        login = str(user_data)
     
     # List of common bot identifiers
     bot_identifiers = [
@@ -127,7 +142,8 @@ def is_bot(user_login: any) -> bool:
         "circleci"
     ]
     
-    return any(bot_id in user_login.lower() for bot_id in bot_identifiers)
+    # Check if any bot identifier is in the login
+    return any(bot_id in login.lower() for bot_id in bot_identifiers)
 
 def calculate_commit_frequency(commits, time_window_days=730):
     """Calculates the commit frequency over a specified time window."""
@@ -158,7 +174,7 @@ def calculate_commit_frequency(commits, time_window_days=730):
 
     return len(commits_in_window) / time_window_days
 
-def calculate_code_survival(commits):
+def calculate_code_survival(commits: list) -> float:
     """Calculate percentage of code still present in latest commit (simplified)"""
     if not commits:
         return 100  # Default to max if no commits
@@ -178,7 +194,7 @@ def calculate_code_survival(commits):
 
     return ((total_additions - total_deletions) / total_additions) * 100
 
-def calculate_code_quality(commits):
+def calculate_code_quality(commits: list) -> float:
     """Enhanced code quality analysis"""
     if not commits:
         return 0
@@ -208,7 +224,7 @@ def calculate_code_quality(commits):
     # Normalize the score
     return min(quality_score / max(len(commits), 1), 100)
 
-def calculate_consistency(contributions):
+def calculate_consistency(contributions: list) -> float:
     """Calculate contribution consistency over time (active months)."""
     if not contributions:
         return 0
@@ -240,6 +256,8 @@ def get_user_contributions(url_template, username, contribution_type, **kwargs):
     """Generic pagination handler for GitHub API"""
     api = GitHubAPI()  # Use our new GitHubAPI class
     url = url_template.format(username=username, **kwargs)  # Pass additional params
+    
+    logger.debug(f"Fetching {contribution_type} for {username} from {url}")
 
     items = []
     next_url = url
@@ -262,6 +280,12 @@ def get_user_contributions(url_template, username, contribution_type, **kwargs):
         except RequestException as e:
             logger.error(f"Error fetching {contribution_type}: {str(e)}")
             return {'error': f"Error fetching {contribution_type}: {str(e)}"}
+        except ValueError as e:
+            logger.error(f"JSON parsing error for {contribution_type}: {str(e)}")
+            return {'error': f"JSON parsing error: {str(e)}"}
+        except Exception as e:
+            logger.error(f"Unexpected error fetching {contribution_type}: {str(e)}")
+            return {'error': f"Unexpected error: {str(e)}"}
 
     return items
 
@@ -325,94 +349,88 @@ def get_user_issues(username):
 @cache_response()
 def get_user_reviews(username):
     """Fetch pull requests reviewed by user, including review comments."""
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
+    api = GitHubAPI()  # Use the GitHubAPI class
     two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    
     # Use the Search API to find PRs *reviewed by* the user
     url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={two_years_ago}&per_page=100'
-    response = requests.get(url, headers=headers)
-    print(response.url)
-
-    if response.status_code != 200:
-        return {'error': f'Could not fetch reviews: {response.status_code} - {response.text}'}
-
-    all_reviews = []
-    review_data = response.json().get('items', []) # Default to empty list if 'items' is missing
-    for review in review_data:
-        review_comments_url = review['url'] + '/reviews' # Construct URL for *review* comments
-        review_comments_response = requests.get(review_comments_url, headers=headers)
-        comments_list = []  # Initialize *before* the if statement
-        if review_comments_response.status_code == 200:
-            review_comments = review_comments_response.json()
-            # Process the review comments
-            for comment in review_comments:
-                if comment['user']['login'] == username: # Check if comment is from the target user
-                    # Extract relevant data from the comment:
-                    comment_data = {
-                        'comment_id': comment['id'],
-                        'comment_body': comment['body'],
-                        'comment_created_at': comment['submitted_at'], # Use 'submitted_at' for reviews
-                        'state': comment['state']  # IMPORTANT: 'APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', etc.
-                    }
-                    comments_list.append(comment_data)
-                    # You might also want to track:
-                    # - Number of approved reviews
-                    # - Number of reviews requesting changes
-        # No 'elif' needed here.  If it's not 200, we just move on with an empty comments_list.
-        # elif review_comments_response.status_code != 404:  # 404 means no reviews, which is fine
-        #      return {'error': f'Could not fetch review comments: {response.status_code} - {response.text}'}
-
-        time.sleep(1)  # Sleep for a second to avoid secondary rate limits
-        #add all the details to final output
-        all_reviews.append({
-            'pr_id': review.get('number'), # Use .get() for safety
-            'pr_title': review.get('title'),
-            'pr_url': review.get('html_url'),
-            'repo_url': review.get('repository_url'),
-            'comments': comments_list
-            #  You might still need to fetch individual *review* comments.
-        })
-    while 'next' in response.links.keys():
-        response = requests.get(response.links['next']['url'], headers=headers)
+    
+    try:
+        response = api.make_request(url)  # Use the rate-limited request method
+        logger.debug(f"Fetching reviews from: {response.url}")  # Instead of print()
+        
         if response.status_code != 200:
             return {'error': f'Could not fetch reviews: {response.status_code} - {response.text}'}
-        review_data = response.json().get('items', [])
+        
+        all_reviews = []
+        review_data = response.json().get('items', [])  # Default to empty list if 'items' is missing
+        
         for review in review_data:
-          review_comments_url = review['url'] + '/reviews' # Construct URL for *review* comments
-          review_comments_response = requests.get(review_comments_url, headers=headers)
-          comments_list = []  # Initialize *before* the if statement
-          if review_comments_response.status_code == 200:
-              review_comments = review_comments_response.json()
-              # Process the review comments
-              for comment in review_comments:
-                  if comment['user']['login'] == username: # Check if comment is from the target user
-                      # Extract relevant data from the comment:
-                      comment_data = {
-                          'comment_id': comment['id'],
-                          'comment_body': comment['body'],
-                          'comment_created_at': comment['submitted_at'], # Use 'submitted_at' for reviews
-                          'state': comment['state']  # IMPORTANT: 'APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', etc.
-                      }
-                      comments_list.append(comment_data)
-                      # You might also want to track:
-                      # - Number of approved reviews
-                      # - Number of reviews requesting changes
-          # No 'elif' needed here.  If it's not 200, we just move on with an empty comments_list.
-          #elif review_comments_response.status_code != 404:  # 404 means no reviews, which is fine
-              #return {'error': f'Could not fetch review comments: {response.status_code} - {response.text}'}
-
-          time.sleep(1)  # Sleep for a second to avoid secondary rate limits
-          #add all the details to final output
-          all_reviews.append({
-              'pr_id': review.get('number'), # Use .get() for safety
-              'pr_title': review.get('title'),
-              'pr_url': review.get('html_url'),
-              'repo_url': review.get('repository_url'),
-              'comments': comments_list
-              #  You might still need to fetch individual *review* comments.
-          })
-    return all_reviews
+            review_comments_url = review['url'] + '/reviews'  # Construct URL for *review* comments
+            review_comments_response = api.make_request(review_comments_url)  # Use GitHubAPI here too
+            
+            comments_list = []  # Initialize *before* the if statement
+            if review_comments_response.status_code == 200:
+                review_comments = review_comments_response.json()
+                # Process the review comments
+                for comment in review_comments:
+                    if comment['user']['login'] == username:  # Check if comment is from the target user
+                        # Extract relevant data from the comment:
+                        comment_data = {
+                            'comment_id': comment['id'],
+                            'comment_body': comment['body'],
+                            'comment_created_at': comment['submitted_at'],  # Use 'submitted_at' for reviews
+                            'state': comment['state']  # IMPORTANT: 'APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', etc.
+                        }
+                        comments_list.append(comment_data)
+            
+            # Add all the details to final output
+            all_reviews.append({
+                'pr_id': review.get('number'),  # Use .get() for safety
+                'pr_title': review.get('title'),
+                'pr_url': review.get('html_url'),
+                'repo_url': review.get('repository_url'),
+                'comments': comments_list
+            })
+        
+        # Handle pagination
+        while 'next' in response.links:
+            response = api.make_request(response.links['next']['url'])  # Use GitHubAPI for pagination
+            
+            if response.status_code != 200:
+                return {'error': f'Could not fetch reviews: {response.status_code} - {response.text}'}
+            
+            review_data = response.json().get('items', [])
+            for review in review_data:
+                review_comments_url = review['url'] + '/reviews'
+                review_comments_response = api.make_request(review_comments_url)
+                
+                comments_list = []
+                if review_comments_response.status_code == 200:
+                    review_comments = review_comments_response.json()
+                    for comment in review_comments:
+                        if comment['user']['login'] == username:
+                            comment_data = {
+                                'comment_id': comment['id'],
+                                'comment_body': comment['body'],
+                                'comment_created_at': comment['submitted_at'],
+                                'state': comment['state']
+                            }
+                            comments_list.append(comment_data)
+                
+                all_reviews.append({
+                    'pr_id': review.get('number'),
+                    'pr_title': review.get('title'),
+                    'pr_url': review.get('html_url'),
+                    'repo_url': review.get('repository_url'),
+                    'comments': comments_list
+                })
+        
+        return all_reviews
+    
+    except Exception as e:
+        logger.error(f"Error fetching reviews: {str(e)}")
+        return {'error': f'Error fetching reviews: {str(e)}'}
 
 
 @cache_response()
@@ -426,20 +444,20 @@ def get_user_repos(username):
 @cache_response()
 def get_repo_commits(username, repo_name):
     """Fetch commits for a specific repository, handling pagination and errors."""
-    headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
+    api = GitHubAPI()  # Use the GitHubAPI class
     two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
     url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
 
     all_commits = []
     while True:
-        response = requests.get(url, headers=headers)
-        logging.debug(f"Fetching commits for repo: {repo_name}, URL: {url}, Status: {response.status_code}")  # Debugging line
+        response = api.make_request(url)  # Use the rate-limited request method
+        logging.debug(f"Fetching commits for repo: {repo_name}, URL: {url}, Status: {response.status_code}")
 
         if response.status_code == 200:
             all_commits.extend(response.json())
             if 'next' in response.links:
                 url = response.links['next']['url']
-                time.sleep(1)  # Respect GitHub's rate limits
+                # No need for sleep here as GitHubAPI.make_request handles rate limiting
             else:
                 break
         elif response.status_code == 409:
@@ -524,7 +542,8 @@ def aggregate_user_data(username):
                     aggregated_data['total_commits'] += num_commits
 
                     # Get contributors with proper error handling
-                    contributors_response = requests.get(repo['contributors_url'], headers={'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'})
+                    api = GitHubAPI()  # Use the GitHubAPI class
+                    contributors_response = api.make_request(repo['contributors_url'])
                     logging.debug(f"Contributors response for {repo_name}: Status {contributors_response.status_code}, Content-Type: {contributors_response.headers.get('Content-Type')}")
                     
                     # Handle different response types for contributors
@@ -552,17 +571,15 @@ def aggregate_user_data(username):
                     'created_at': repo['created_at'],  # <--- ADD THIS
                     'num_commits': num_commits, # Add commit count for this repo
                     'original': is_original,
-                    'fork' : repo['fork']
+                    'fork' : repo['fork'],
+                    'commits': commits  # Store commits for later use
                      }
                     aggregated_data['repos'].append(repo_data)
 
-            # Collect all commits for code quality calculation
+            # Collect all commits for code quality calculation - use already collected commits
             all_commits = []
             for repo in aggregated_data['repos']:
-                repo_name = repo['name']
-                commits = get_repo_commits(username, repo_name)
-                if not isinstance(commits, dict):  # Check it's not an error response
-                    all_commits.extend(commits)
+                all_commits.extend(repo.get('commits', []))
             
             # Calculate code quality
             aggregated_data['code_quality'] = calculate_code_quality(all_commits)
@@ -594,13 +611,20 @@ async def fetch_all_data(username):
     try:
         import asyncio
         import aiohttp
-        from aiohttp import ClientSession
+        from aiohttp import ClientSession, ClientError
         
         async def fetch_data(session, url, headers):
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                return {'error': f'Error: {response.status}'}
+            try:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return {'error': f'Error: {response.status} - {await response.text()}'}
+            except ClientError as e:
+                logger.error(f"Client error for {url}: {str(e)}")
+                return {'error': f'Client error: {str(e)}'}
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout for {url}")
+                return {'error': 'Request timed out'}
         
         async def get_pulls_async(session, headers):
             two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -623,22 +647,49 @@ async def fetch_all_data(username):
         
         headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
         
-        async with ClientSession() as session:
+        # Configure timeout and other session parameters
+        timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds timeout
+        
+        async with ClientSession(timeout=timeout) as session:
             pulls_task = get_pulls_async(session, headers)
             issues_task = get_issues_async(session, headers)
             repos_task = get_repos_async(session, headers)
             reviews_task = get_reviews_async(session, headers)
             
             pulls_data, issues_data, repos_data, reviews_data = await asyncio.gather(
-                pulls_task, issues_task, repos_task, reviews_task
+                pulls_task, issues_task, repos_task, reviews_task,
+                return_exceptions=True  # Don't let one failure stop everything
             )
             
-            return {
-                'pulls': pulls_data,
-                'issues': issues_data,
-                'repos': repos_data,
-                'reviews': reviews_data
-            }
+            # Handle any exceptions from the tasks
+            result = {}
+            
+            if isinstance(pulls_data, Exception):
+                logger.error(f"Error fetching pulls: {str(pulls_data)}")
+                result['pulls'] = {'error': f'Error fetching pulls: {str(pulls_data)}'}
+            else:
+                result['pulls'] = pulls_data
+                
+            if isinstance(issues_data, Exception):
+                logger.error(f"Error fetching issues: {str(issues_data)}")
+                result['issues'] = {'error': f'Error fetching issues: {str(issues_data)}'}
+            else:
+                result['issues'] = issues_data
+                
+            if isinstance(repos_data, Exception):
+                logger.error(f"Error fetching repos: {str(repos_data)}")
+                result['repos'] = {'error': f'Error fetching repos: {str(repos_data)}'}
+            else:
+                result['repos'] = repos_data
+                
+            if isinstance(reviews_data, Exception):
+                logger.error(f"Error fetching reviews: {str(reviews_data)}")
+                result['reviews'] = {'error': f'Error fetching reviews: {str(reviews_data)}'}
+            else:
+                result['reviews'] = reviews_data
+            
+            return result
+            
     except ImportError:
         logger.warning("aiohttp not installed, falling back to synchronous fetching")
         # Fall back to synchronous fetching
@@ -648,6 +699,12 @@ async def fetch_all_data(username):
             'repos': get_user_repos(username),
             'reviews': get_user_reviews(username)
         }
+    except ClientError as e:
+        logger.error(f"Network error in async operation: {str(e)}")
+        return {'error': f"Network error: {str(e)}"}
+    except asyncio.TimeoutError:
+        logger.error("Async operation timed out")
+        return {'error': "Operation timed out"}
     except Exception as e:
         logger.error(f"Error in async data fetching: {str(e)}")
         return {'error': f"Error in async data fetching: {str(e)}"}
@@ -716,12 +773,12 @@ def calculate_impact_score(aggregated_data: dict) -> float:
     approved_ratio = aggregated_data.get('total_approved_reviews', 0) / total_reviews
     
     # Calculate consistency score (placeholder - will be implemented in a separate function)
-    consistency_score = 0.5  # Default value until we implement the full calculation
+    consistency_score = aggregated_data.get('consistency', 0)  # Use actual calculated value
     
     # Calculate the final impact score
     impact_score = (
         weights['merged_prs'] * normalize_metric(aggregated_data.get('merged_prs', 0), MAX_PRS) +
-        weights['code_quality'] * (code_survival / 100) +
+        weights['code_quality'] * (aggregated_data.get('code_quality', 0) / 100) +
         weights['project_impact'] * (aggregated_data.get('project_impact', 0) / 100) +
         weights['review_quality'] * approved_ratio +
         weights['consistency'] * consistency_score
@@ -729,7 +786,8 @@ def calculate_impact_score(aggregated_data: dict) -> float:
 
     return min(impact_score, 100)  # Convert to percentage and cap at 100
 
-def calculate_project_impact(repo_data, is_original): # Add is_original parameter
+def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
+    """Calculate impact score for a single repository"""
     if is_original:
         originality_weight = 0.7  # High weight for original repos
     else:
@@ -764,8 +822,9 @@ def calculate_project_impact(repo_data, is_original): # Add is_original paramete
 
     return project_impact_score
 
-def calculate_overall_project_impact(aggregated_data):
-      # Calculate overall project impact based on individual repo impacts
+def calculate_overall_project_impact(aggregated_data: dict) -> float:
+    """Calculate overall project impact based on individual repo impacts"""
+    # Calculate overall project impact based on individual repo impacts
     total_impact = 0
     for repo in aggregated_data['repos']:
         is_original = not repo.get('fork',False) #check if the repo is forked.
