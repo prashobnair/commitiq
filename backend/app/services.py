@@ -471,23 +471,47 @@ def get_repo_commits(username, repo_name):
 
 # --- Aggregation and Calculation Functions ---
 @cache_response()
-def aggregate_user_data(username):
+def aggregate_user_data(username, async_data=None):
         try:
             # Fetch data using the API functions
-            pulls = get_user_pulls(username)
+            if async_data is None:
+                # If async data is not present, use the sync functions
+                pulls = get_user_pulls(username)
+                issues = get_user_issues(username)
+                reviews = get_user_reviews(username)
+                repos = get_user_repos(username)
+            else:
+                # If async_data is passed, unpack data
+                pulls = async_data.get('pulls', [])
+                if isinstance(pulls, dict) and 'items' in pulls:
+                    pulls = pulls.get('items', [])
+                
+                issues = async_data.get('issues', [])
+                if isinstance(issues, dict) and 'items' in issues:
+                    issues = issues.get('items', [])
+                
+                reviews = async_data.get('reviews', [])
+                if isinstance(reviews, dict) and 'items' in reviews:
+                    reviews = reviews.get('items', [])
+                
+                repos = async_data.get('repos', [])
+
+            # Check for errors
             if isinstance(pulls, dict) and 'error' in pulls:
                 return {'error': f"Error fetching pulls: {pulls['error']}"}
 
-            issues = get_user_issues(username)
             if isinstance(issues, dict) and 'error' in issues:
                 return {'error': f"Error fetching issues: {issues['error']}"}
 
-            reviews = get_user_reviews(username)
-            if isinstance(reviews, dict) and 'error' in reviews: #Added check for dict
+            if isinstance(reviews, dict) and 'error' in reviews:  # Added check for dict
                 return {'error': f"Error fetching reviews: {reviews['error']}"}
-            repos = get_user_repos(username)
+
             if isinstance(repos, dict) and 'error' in repos:
                 return {'error': f"Error fetching repos: {repos['error']}"}
+
+            # Process the data as before
+            # ... existing code ...
+
             # Aggregate data
             num_merged_prs = sum(1 for pull in pulls if pull['merged'])
             num_issues_created = len(issues)
@@ -831,3 +855,23 @@ def calculate_overall_project_impact(aggregated_data: dict) -> float:
         repo['impact_score'] = calculate_project_impact(repo, is_original)  # Calculate individual repo impact and pass is_original
         total_impact += repo['impact_score']
     return total_impact
+
+# Add this function after the other get_user_* functions
+@cache_response()
+def get_user_info(username):
+    """Fetch user information from GitHub API"""
+    api = GitHubAPI()
+    url = f'https://api.github.com/users/{username}'
+    try:
+        response = api.make_request(url)
+        response.raise_for_status()
+        return response.json()
+    except RequestException as e:
+        logger.error(f"Error fetching user info: {str(e)}")
+        return {'error': f"Error fetching user info: {str(e)}"}
+    except ValueError as e:
+        logger.error(f"JSON parsing error for user info: {str(e)}")
+        return {'error': f"JSON parsing error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Unexpected error fetching user info: {str(e)}")
+        return {'error': f"Unexpected error: {str(e)}"}
