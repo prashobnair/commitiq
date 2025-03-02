@@ -480,6 +480,8 @@ def aggregate_user_data(username, async_data=None):
                 issues = get_user_issues(username)
                 reviews = get_user_reviews(username)
                 repos = get_user_repos(username)
+                security_advisories = get_security_advisories(username)
+                discussions = get_discussions(username)
             else:
                 # If async_data is passed, unpack data
                 pulls = async_data.get('pulls', [])
@@ -495,6 +497,14 @@ def aggregate_user_data(username, async_data=None):
                     reviews = reviews.get('items', [])
                 
                 repos = async_data.get('repos', [])
+                
+                security_advisories = async_data.get('security_advisories', [])
+                if isinstance(security_advisories, dict) and 'items' in security_advisories:
+                    security_advisories = security_advisories.get('items', [])
+                
+                discussions = async_data.get('discussions', [])
+                if isinstance(discussions, dict) and 'items' in discussions:
+                    discussions = discussions.get('items', [])
 
             # Check for errors
             if isinstance(pulls, dict) and 'error' in pulls:
@@ -508,6 +518,14 @@ def aggregate_user_data(username, async_data=None):
 
             if isinstance(repos, dict) and 'error' in repos:
                 return {'error': f"Error fetching repos: {repos['error']}"}
+                
+            if isinstance(security_advisories, dict) and 'error' in security_advisories:
+                logging.warning(f"Error fetching security advisories: {security_advisories['error']}")
+                security_advisories = []  # Continue with empty list instead of failing
+                
+            if isinstance(discussions, dict) and 'error' in discussions:
+                logging.warning(f"Error fetching discussions: {discussions['error']}")
+                discussions = []  # Continue with empty list instead of failing
 
             # Process the data as before
             # ... existing code ...
@@ -529,7 +547,15 @@ def aggregate_user_data(username, async_data=None):
                 'total_commits': 0, #Initialize total commits
                 'project_impact': 0, # Initialize project impact score
                 'consistency': 0, # Initialize consistency score
-                'code_quality': 0 # Initialize code quality score
+                'code_quality': 0, # Initialize code quality score
+                # New metrics
+                'file_impact': 0,
+                'code_survival_rate': 0,
+                'security_impact': 0,
+                'review_turnaround': calculate_review_turnaround(reviews),
+                'discussion_engagement': analyze_discussion_quality(discussions),
+                'dependency_health': {'total_dep_updates': 0, 'update_frequency': 0, 'dep_files_updated': 0},
+                'ci_cd_usage': {'score': 0}
             }
             # Add review details (NEW)
             total_approved = 0
@@ -550,9 +576,13 @@ def aggregate_user_data(username, async_data=None):
             aggregated_data['total_changes_requested'] = total_changes_requested
             aggregated_data['total_review_comments'] = total_comments #number of comments
 
+            # Collect all commits for analysis
+            all_commits = []
+            
              # Aggregate commit counts and other repo-level metrics
             for repo in repos:
                     repo_name = repo['name']
+                    repo_owner = repo['owner']['login'] if 'owner' in repo and 'login' in repo['owner'] else username
                     commits_response = get_repo_commits(username, repo_name)
                     
                     # Handle error responses from get_repo_commits
@@ -564,6 +594,9 @@ def aggregate_user_data(username, async_data=None):
                         
                     num_commits = len(commits)
                     aggregated_data['total_commits'] += num_commits
+                    
+                    # Add commits to all_commits for later analysis
+                    all_commits.extend(commits)
 
                     # Get contributors with proper error handling
                     api = GitHubAPI()  # Use the GitHubAPI class
@@ -583,6 +616,19 @@ def aggregate_user_data(username, async_data=None):
                     else:
                         logging.warning(f"Unexpected status code for contributors: {contributors_response.status_code}")
                         num_contributors = 0
+                        
+                    # Get CI/CD usage
+                    ci_cd_data = detect_ci_cd(repo_owner, repo_name)
+                    
+                    # Get release impact
+                    release_data = get_release_impact(repo_owner, repo_name)
+                    
+                    # Calculate test coverage
+                    test_coverage = calculate_test_coverage(commits)
+                    
+                    # Calculate dependency health
+                    dependency_data = analyze_dependency_updates(commits)
+                    
                     is_original = not repo['fork']
                     repo_data = {
                     'name': repo_name,
@@ -596,24 +642,50 @@ def aggregate_user_data(username, async_data=None):
                     'num_commits': num_commits, # Add commit count for this repo
                     'original': is_original,
                     'fork' : repo['fork'],
-                    'commits': commits  # Store commits for later use
+                    'commits': commits,  # Store commits for later use
+                    'ci_cd_usage': ci_cd_data,
+                    'release_impact': release_data,
+                    'test_coverage': test_coverage,
+                    'dependency_health': dependency_data
                      }
                     aggregated_data['repos'].append(repo_data)
-
-            # Collect all commits for code quality calculation - use already collected commits
-            all_commits = []
-            for repo in aggregated_data['repos']:
-                all_commits.extend(repo.get('commits', []))
+                    
+                    # Update aggregated CI/CD score
+                    aggregated_data['ci_cd_usage']['score'] = max(
+                        aggregated_data['ci_cd_usage']['score'],
+                        ci_cd_data.get('score', 0)
+                    )
+                    
+                    # Update aggregated dependency health
+                    aggregated_data['dependency_health']['total_dep_updates'] += dependency_data.get('total_dep_updates', 0)
+                    aggregated_data['dependency_health']['dep_files_updated'] += dependency_data.get('dep_files_updated', 0)
+            
+            # Calculate aggregated dependency update frequency
+            if aggregated_data['total_commits'] > 0:
+                aggregated_data['dependency_health']['update_frequency'] = (
+                    aggregated_data['dependency_health']['total_dep_updates'] / 
+                    aggregated_data['total_commits']
+                )
             
             # Calculate code quality
             aggregated_data['code_quality'] = calculate_code_quality(all_commits)
+            
+            # Calculate file impact and survival
+            aggregated_data['file_impact'] = calculate_file_impact(all_commits)
+            aggregated_data['code_survival_rate'] = calculate_file_survival(all_commits)
+            
+            # Calculate security impact
+            aggregated_data['security_impact'] = calculate_security_impact(all_commits, security_advisories)
             
             # Calculate consistency (using all contributions)
             all_contributions = pulls + issues + reviews
             aggregated_data['consistency'] = calculate_consistency(all_contributions)
             
-            # Calculate overall project impact - THIS LINE WAS MISSING!
+            # Calculate overall project impact
             aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
+            
+            # Calculate final impact score with new metrics
+            aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
 
             return aggregated_data
 
@@ -668,6 +740,16 @@ async def fetch_all_data(username):
             two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
             url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={two_years_ago}&per_page=100'
             return await fetch_data(session, url, headers)
+            
+        async def get_security_advisories_async(session, headers):
+            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=author:{username}+label:security+created:>={two_years_ago}&per_page=100'
+            return await fetch_data(session, url, headers)
+            
+        async def get_discussions_async(session, headers):
+            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=author:{username}+is:discussion+created:>={two_years_ago}&per_page=100'
+            return await fetch_data(session, url, headers)
         
         headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
         
@@ -679,9 +761,11 @@ async def fetch_all_data(username):
             issues_task = get_issues_async(session, headers)
             repos_task = get_repos_async(session, headers)
             reviews_task = get_reviews_async(session, headers)
+            security_task = get_security_advisories_async(session, headers)
+            discussions_task = get_discussions_async(session, headers)
             
-            pulls_data, issues_data, repos_data, reviews_data = await asyncio.gather(
-                pulls_task, issues_task, repos_task, reviews_task,
+            pulls_data, issues_data, repos_data, reviews_data, security_data, discussions_data = await asyncio.gather(
+                pulls_task, issues_task, repos_task, reviews_task, security_task, discussions_task,
                 return_exceptions=True  # Don't let one failure stop everything
             )
             
@@ -711,6 +795,18 @@ async def fetch_all_data(username):
                 result['reviews'] = {'error': f'Error fetching reviews: {str(reviews_data)}'}
             else:
                 result['reviews'] = reviews_data
+                
+            if isinstance(security_data, Exception):
+                logger.error(f"Error fetching security advisories: {str(security_data)}")
+                result['security_advisories'] = {'error': f'Error fetching security advisories: {str(security_data)}'}
+            else:
+                result['security_advisories'] = security_data
+                
+            if isinstance(discussions_data, Exception):
+                logger.error(f"Error fetching discussions: {str(discussions_data)}")
+                result['discussions'] = {'error': f'Error fetching discussions: {str(discussions_data)}'}
+            else:
+                result['discussions'] = discussions_data
             
             return result
             
@@ -721,7 +817,9 @@ async def fetch_all_data(username):
             'pulls': get_user_pulls(username),
             'issues': get_user_issues(username),
             'repos': get_user_repos(username),
-            'reviews': get_user_reviews(username)
+            'reviews': get_user_reviews(username),
+            'security_advisories': get_security_advisories(username),
+            'discussions': get_discussions(username)
         }
     except ClientError as e:
         logger.error(f"Network error in async operation: {str(e)}")
@@ -770,42 +868,87 @@ def normalize_metric(value, max_value):
 
 def calculate_impact_score(aggregated_data: dict) -> float:
     """Calculates the Impact Score based on the aggregated data (normalized)."""
-    # New weights based on industry research
+    # Enhanced weights based on industry research and new metrics
     weights = {
-        'merged_prs': 0.25,
-        'code_quality': 0.20,  # New metric
-        'project_impact': 0.30,
-        'review_quality': 0.15,  # Changed from code_reviews
-        'consistency': 0.10
+        # Core contribution metrics
+        'merged_prs': 0.15,
+        'code_quality': 0.12,
+        'project_impact': 0.15,
+        
+        # New code evolution metrics
+        'file_impact': 0.08,
+        'code_survival_rate': 0.05,
+        
+        # Collaboration metrics
+        'review_quality': 0.10,
+        'review_turnaround': 0.05,
+        
+        # Project health metrics
+        'ci_cd_usage': 0.06,
+        'test_coverage': 0.06,
+        
+        # Security metrics
+        'security_impact': 0.08,
+        
+        # Maintenance metrics
+        'dependency_health': 0.05,
+        
+        # Community engagement
+        'discussion_engagement': 0.05,
+        
+        # Consistency over time
+        'consistency': 0.05
     }
-    
-    # Calculate code quality score
-    # Get all commits from all repos
-    all_commits = []
-    for repo in aggregated_data.get('repos', []):
-        repo_name = repo.get('name')
-        username = aggregated_data.get('username')
-        if repo_name and username:
-            commits = get_repo_commits(username, repo_name)
-            if not isinstance(commits, dict):  # Check it's not an error response
-                all_commits.extend(commits)
-    
-    code_survival = calculate_code_survival(all_commits)
     
     # Calculate review quality score
     total_reviews = aggregated_data.get('total_review_comments', 0) or 1  # Avoid division by zero
     approved_ratio = aggregated_data.get('total_approved_reviews', 0) / total_reviews
     
-    # Calculate consistency score (placeholder - will be implemented in a separate function)
-    consistency_score = aggregated_data.get('consistency', 0)  # Use actual calculated value
+    # Normalize review turnaround (lower is better)
+    # Assume 48 hours is the maximum reasonable turnaround time
+    turnaround_hours = aggregated_data.get('review_turnaround', 48)
+    normalized_turnaround = 1.0 - min(turnaround_hours / 48.0, 1.0)
+    
+    # Get CI/CD usage score
+    ci_cd_score = aggregated_data.get('ci_cd_usage', {}).get('score', 0)
+    
+    # Get dependency health score
+    dep_update_frequency = aggregated_data.get('dependency_health', {}).get('update_frequency', 0)
+    normalized_dep_health = min(dep_update_frequency * 5, 1.0)  # Normalize: 20% updates is considered good
+    
+    # Get discussion engagement score
+    discussion_score = aggregated_data.get('discussion_engagement', {}).get('engagement_score', 0) / 100.0
     
     # Calculate the final impact score
     impact_score = (
+        # Core contribution metrics
         weights['merged_prs'] * normalize_metric(aggregated_data.get('merged_prs', 0), MAX_PRS) +
         weights['code_quality'] * (aggregated_data.get('code_quality', 0) / 100) +
         weights['project_impact'] * (aggregated_data.get('project_impact', 0) / 100) +
+        
+        # New code evolution metrics
+        weights['file_impact'] * aggregated_data.get('file_impact', 0) +
+        weights['code_survival_rate'] * (aggregated_data.get('code_survival_rate', 0) / 100) +
+        
+        # Collaboration metrics
         weights['review_quality'] * approved_ratio +
-        weights['consistency'] * consistency_score
+        weights['review_turnaround'] * normalized_turnaround +
+        
+        # Project health metrics
+        weights['ci_cd_usage'] * ci_cd_score +
+        weights['test_coverage'] * (aggregated_data.get('test_coverage', 0) / 100) +
+        
+        # Security metrics
+        weights['security_impact'] * (aggregated_data.get('security_impact', 0) / 100) +
+        
+        # Maintenance metrics
+        weights['dependency_health'] * normalized_dep_health +
+        
+        # Community engagement
+        weights['discussion_engagement'] * discussion_score +
+        
+        # Consistency over time
+        weights['consistency'] * aggregated_data.get('consistency', 0)
     ) * 100
 
     return min(impact_score, 100)  # Convert to percentage and cap at 100
@@ -875,3 +1018,532 @@ def get_user_info(username):
     except Exception as e:
         logger.error(f"Unexpected error fetching user info: {str(e)}")
         return {'error': f"Unexpected error: {str(e)}"}
+
+# --- New Code Evolution Metrics ---
+def calculate_file_survival(commits: list) -> float:
+    """Calculate percentage of files still present in latest commit"""
+    if not commits:
+        return 0
+        
+    surviving_files = set()
+    all_files = set()
+    
+    # Process commits in reverse chronological order (newest first)
+    sorted_commits = sorted(commits, key=lambda c: c.get('commit', {}).get('author', {}).get('date', ''), reverse=True)
+    
+    for commit in sorted_commits:
+        files = commit.get('files', [])
+        if not files:
+            continue
+            
+        for file_info in files:
+            filename = file_info.get('filename')
+            if not filename:
+                continue
+                
+            status = file_info.get('status')
+            
+            if status == 'removed':
+                surviving_files.discard(filename)
+            else:  # added or modified
+                surviving_files.add(filename)
+                
+            all_files.add(filename)
+    
+    return len(surviving_files) / len(all_files) if all_files else 0
+
+def calculate_file_impact(commits: list) -> float:
+    """Calculate file impact based on file types and paths"""
+    if not commits:
+        return 0
+        
+    # Extract all files from commits
+    all_files = []
+    for commit in commits:
+        files = commit.get('files', [])
+        if files:
+            all_files.extend([f.get('filename') for f in files if f.get('filename')])
+    
+    if not all_files:
+        return 0
+    
+    # Define weights for different file types and paths
+    # These weights can be adjusted based on the specific project
+    weights = {
+        # Core code files by extension
+        '.py': 1.5,
+        '.js': 1.5,
+        '.ts': 1.5,
+        '.java': 1.5,
+        '.c': 1.5,
+        '.cpp': 1.5,
+        '.go': 1.5,
+        '.rs': 1.5,
+        
+        # Test files
+        'test': 1.2,
+        'spec': 1.2,
+        
+        # Documentation
+        '.md': 0.7,
+        '.rst': 0.7,
+        'docs/': 0.7,
+        
+        # Configuration
+        '.json': 0.8,
+        '.yml': 0.8,
+        '.yaml': 0.8,
+        '.toml': 0.8,
+        '.ini': 0.8,
+        
+        # Build and deployment
+        'Dockerfile': 1.0,
+        '.github/workflows/': 1.0,
+        'ci/': 1.0,
+        
+        # Examples and scripts
+        'examples/': 0.6,
+        'scripts/': 0.8
+    }
+    
+    # Calculate impact score
+    total_impact = 0
+    for file_path in all_files:
+        file_weight = 0.5  # Default weight
+        
+        # Check for matches in our weights dictionary
+        for pattern, weight in weights.items():
+            if pattern in file_path.lower():
+                file_weight = max(file_weight, weight)  # Use the highest matching weight
+        
+        total_impact += file_weight
+    
+    # Normalize by number of files
+    return total_impact / len(all_files)
+
+# --- Collaboration Metrics ---
+def calculate_review_turnaround(reviews: list) -> float:
+    """Calculate average PR review turnaround time in hours"""
+    if not reviews:
+        return 0
+        
+    total_time = 0
+    valid_reviews = 0
+    
+    for review in reviews:
+        # Skip reviews without necessary data
+        if not review.get('comments'):
+            continue
+            
+        for comment in review.get('comments', []):
+            # Skip comments without necessary timestamps
+            if not comment.get('comment_created_at'):
+                continue
+                
+            try:
+                # Get PR creation time from the review object
+                pr_url = review.get('pr_url', '')
+                if not pr_url:
+                    continue
+                    
+                # Extract PR number and repo from URL
+                parts = pr_url.split('/')
+                if len(parts) < 7:
+                    continue
+                    
+                repo_owner = parts[3]
+                repo_name = parts[4]
+                pr_number = parts[6]
+                
+                # Fetch PR details to get creation time
+                api = GitHubAPI()
+                pr_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/pulls/{pr_number}'
+                pr_response = api.make_request(pr_url)
+                
+                if pr_response.status_code != 200:
+                    continue
+                    
+                pr_data = pr_response.json()
+                pr_created_at = pr_data.get('created_at')
+                
+                if not pr_created_at:
+                    continue
+                
+                # Calculate time difference
+                pr_created = datetime.strptime(pr_created_at, '%Y-%m-%dT%H:%M:%SZ')
+                review_time = datetime.strptime(comment['comment_created_at'], '%Y-%m-%dT%H:%M:%SZ')
+                
+                # Only count if review is after PR creation
+                if review_time > pr_created:
+                    time_diff = (review_time - pr_created).total_seconds() / 3600  # Convert to hours
+                    total_time += time_diff
+                    valid_reviews += 1
+                    
+            except (KeyError, ValueError, Exception) as e:
+                logging.error(f"Error calculating review turnaround: {str(e)}")
+                continue
+    
+    return total_time / valid_reviews if valid_reviews else 0
+
+# --- Project Health Metrics ---
+def detect_ci_cd(repo_owner: str, repo_name: str) -> dict:
+    """Detect CI/CD usage in repository"""
+    api = GitHubAPI()
+    
+    # Common CI/CD configuration paths
+    paths = [
+        '.github/workflows',           # GitHub Actions
+        '.circleci/config.yml',        # CircleCI
+        '.travis.yml',                 # Travis CI
+        'azure-pipelines.yml',         # Azure Pipelines
+        'Jenkinsfile',                 # Jenkins
+        '.gitlab-ci.yml',              # GitLab CI
+        'bitbucket-pipelines.yml',     # Bitbucket Pipelines
+        '.drone.yml',                  # Drone CI
+        'appveyor.yml',                # AppVeyor
+        'cloudbuild.yaml',             # Google Cloud Build
+        'buildspec.yml',               # AWS CodeBuild
+        '.teamcity/'                   # TeamCity
+    ]
+    
+    ci_cd_results = {}
+    
+    for path in paths:
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path}"
+        try:
+            response = api.make_request(url)
+            ci_cd_results[path] = response.status_code == 200
+        except Exception as e:
+            logging.error(f"Error checking CI/CD path {path}: {str(e)}")
+            ci_cd_results[path] = False
+    
+    # Calculate overall CI/CD score (percentage of detected CI/CD systems)
+    ci_cd_results['score'] = sum(1 for v in ci_cd_results.values() if v) / len(paths)
+    
+    return ci_cd_results
+
+def calculate_test_coverage(commits: list) -> float:
+    """Estimate test coverage through commit patterns and file analysis"""
+    if not commits:
+        return 0
+        
+    # Keywords that indicate test-related activity
+    test_keywords = [
+        'test', 'spec', 'coverage', 'jest', 'pytest', 'unittest', 
+        'mocha', 'jasmine', 'cypress', 'selenium', 'qunit', 'rspec'
+    ]
+    
+    # Count test-related commits
+    test_commits = 0
+    test_files = set()
+    code_files = set()
+    
+    for commit in commits:
+        # Check commit message
+        message = commit.get('commit', {}).get('message', '').lower()
+        if any(kw in message for kw in test_keywords):
+            test_commits += 1
+        
+        # Analyze files in the commit
+        for file_info in commit.get('files', []):
+            filename = file_info.get('filename', '').lower()
+            
+            # Skip if no filename
+            if not filename:
+                continue
+                
+            # Identify test files
+            is_test_file = (
+                'test' in filename or 
+                'spec' in filename or 
+                filename.endswith(('.test.js', '.spec.js', '_test.py', 'test_.py', '_spec.py', 'spec_.py'))
+            )
+            
+            if is_test_file:
+                test_files.add(filename)
+            elif any(filename.endswith(ext) for ext in ['.py', '.js', '.ts', '.java', '.c', '.cpp', '.go', '.rs']):
+                code_files.add(filename)
+    
+    # Calculate metrics
+    test_commit_ratio = test_commits / len(commits) if commits else 0
+    test_file_ratio = len(test_files) / max(len(code_files), 1) if code_files else 0
+    
+    # Combine metrics (weighted average)
+    return (0.4 * test_commit_ratio + 0.6 * test_file_ratio) * 100  # Convert to percentage
+
+# --- Security Metrics ---
+def get_security_advisories(username: str) -> list:
+    """Fetch security-related contributions"""
+    url_template = (
+        'https://api.github.com/search/issues?'
+        'q=author:{username}+label:security+created:>={date}&per_page=100'
+    )
+    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "security_advisories", date=two_years_ago)
+
+def calculate_security_impact(commits: list, advisories: list) -> float:
+    """Calculate security impact score based on commits and advisories"""
+    if not commits and not advisories:
+        return 0
+        
+    # Security-related keywords in commit messages
+    security_keywords = [
+        'security', 'vulnerability', 'cve', 'exploit', 'attack', 
+        'auth', 'authentication', 'authorization', 'encrypt', 'decrypt',
+        'ssl', 'tls', 'https', 'firewall', 'injection', 'xss', 'csrf',
+        'sanitize', 'validate', 'permission', 'access control'
+    ]
+    
+    # Count security-related commits
+    security_commits = 0
+    for commit in commits:
+        message = commit.get('commit', {}).get('message', '').lower()
+        if any(kw in message for kw in security_keywords):
+            security_commits += 1
+    
+    # Calculate security commit ratio
+    security_commit_ratio = security_commits / len(commits) if commits else 0
+    
+    # Calculate advisory impact
+    advisory_impact = 0
+    if advisories:
+        # Impact weights for different security severity levels
+        impact_weights = {
+            'critical': 2.0,
+            'high': 1.5,
+            'medium': 1.2,
+            'low': 0.8,
+            'security': 1.0  # Default for general security label
+        }
+        
+        for advisory in advisories:
+            # Extract labels
+            labels = []
+            for label in advisory.get('labels', []):
+                if isinstance(label, dict):
+                    labels.append(label.get('name', '').lower())
+                elif isinstance(label, str):
+                    labels.append(label.lower())
+            
+            # Calculate impact based on labels
+            max_weight = 0.5  # Default weight
+            for label in labels:
+                for key, weight in impact_weights.items():
+                    if key in label:
+                        max_weight = max(max_weight, weight)
+            
+            advisory_impact += max_weight
+    
+    # Normalize advisory impact
+    normalized_advisory_impact = min(advisory_impact / 10, 1.0) if advisories else 0
+    
+    # Combine metrics (weighted average)
+    return (0.7 * security_commit_ratio + 0.3 * normalized_advisory_impact) * 100  # Convert to percentage
+
+# --- Maintenance Metrics ---
+def analyze_dependency_updates(commits: list) -> dict:
+    """Detect and analyze dependency updates in commits"""
+    if not commits:
+        return {'total_dep_updates': 0, 'update_frequency': 0}
+    
+    # Keywords and patterns for dependency updates
+    dep_keywords = {
+        'dependabot': 1.0,
+        'dependency': 0.8,
+        'bump': 0.7,
+        'update': 0.6,
+        'upgrade': 0.9,
+        'package': 0.7,
+        'requirements': 0.8,
+        'npm': 0.7,
+        'pip': 0.7,
+        'gem': 0.7,
+        'cargo': 0.7
+    }
+    
+    # Dependency files
+    dep_files = [
+        'package.json',
+        'requirements.txt',
+        'Gemfile',
+        'Cargo.toml',
+        'go.mod',
+        'build.gradle',
+        'pom.xml',
+        'composer.json',
+        'yarn.lock',
+        'package-lock.json'
+    ]
+    
+    # Count dependency update commits
+    dep_commits = 0
+    dep_files_updated = 0
+    
+    for commit in commits:
+        # Check commit message
+        message = commit.get('commit', {}).get('message', '').lower()
+        is_dep_commit = False
+        
+        # Check for dependency keywords in commit message
+        for kw, weight in dep_keywords.items():
+            if kw in message:
+                is_dep_commit = True
+                break
+        
+        # Check for dependency file updates
+        for file_info in commit.get('files', []):
+            filename = file_info.get('filename', '')
+            if any(dep_file in filename for dep_file in dep_files):
+                is_dep_commit = True
+                dep_files_updated += 1
+                break
+        
+        if is_dep_commit:
+            dep_commits += 1
+    
+    # Calculate metrics
+    update_frequency = dep_commits / len(commits)
+    
+    return {
+        'total_dep_updates': dep_commits,
+        'update_frequency': update_frequency,
+        'dep_files_updated': dep_files_updated
+    }
+
+def get_release_impact(repo_owner: str, repo_name: str) -> dict:
+    """Analyze release history and impact"""
+    api = GitHubAPI()
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases"
+    
+    try:
+        response = api.make_request(url)
+        
+        if response.status_code != 200:
+            return {
+                'total_releases': 0,
+                'release_frequency': 0,
+                'latest_release_age': None
+            }
+        
+        releases = response.json()
+        
+        if not releases:
+            return {
+                'total_releases': 0,
+                'release_frequency': 0,
+                'latest_release_age': None
+            }
+        
+        # Calculate total releases
+        total_releases = len(releases)
+        
+        # Calculate release frequency (releases per year)
+        if total_releases >= 2:
+            first_release = datetime.strptime(releases[-1]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
+            latest_release = datetime.strptime(releases[0]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
+            time_span_years = (latest_release - first_release).days / 365.25
+            release_frequency = total_releases / max(time_span_years, 0.1)  # Avoid division by zero
+        else:
+            release_frequency = 0
+        
+        # Calculate latest release age in days
+        latest_release_date = datetime.strptime(releases[0]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
+        latest_release_age = (datetime.now() - latest_release_date).days
+        
+        # Calculate total downloads if available
+        total_downloads = 0
+        for release in releases:
+            for asset in release.get('assets', []):
+                total_downloads += asset.get('download_count', 0)
+        
+        return {
+            'total_releases': total_releases,
+            'release_frequency': release_frequency,
+            'latest_release_age': latest_release_age,
+            'total_downloads': total_downloads
+        }
+        
+    except Exception as e:
+        logging.error(f"Error fetching release data: {str(e)}")
+        return {
+            'total_releases': 0,
+            'release_frequency': 0,
+            'latest_release_age': None,
+            'error': str(e)
+        }
+
+# --- Community Engagement Metrics ---
+def get_discussions(username: str) -> list:
+    """Fetch user's discussion participation"""
+    url_template = (
+        'https://api.github.com/search/issues?'
+        'q=author:{username}+is:discussion+created:>={date}&per_page=100'
+    )
+    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "discussions", date=two_years_ago)
+
+def analyze_discussion_quality(discussions: list) -> dict:
+    """Analyze discussion engagement quality"""
+    if not discussions:
+        return {
+            'total': 0,
+            'engagement_score': 0
+        }
+    
+    # Words indicating positive engagement
+    positive_words = {
+        'thanks', 'thank', 'helpful', 'great', 'good', 'excellent', 
+        'awesome', 'appreciate', 'useful', 'solved', 'solution', 
+        'works', 'working', 'fixed', 'resolved'
+    }
+    
+    # Words indicating negative engagement
+    negative_words = {
+        'issue', 'problem', 'bug', 'error', 'fail', 'failed', 
+        'broken', 'doesn\'t work', 'not working', 'incorrect'
+    }
+    
+    # Initialize stats
+    stats = {
+        'total': len(discussions),
+        'positive_count': 0,
+        'negative_count': 0,
+        'solutions_count': 0,
+        'accepted_answers': 0,
+        'engagement_score': 0
+    }
+    
+    # Analyze each discussion
+    for discussion in discussions:
+        body = discussion.get('body', '').lower() if discussion.get('body') else ''
+        title = discussion.get('title', '').lower() if discussion.get('title') else ''
+        combined_text = f"{title} {body}"
+        
+        # Count positive and negative words
+        positive_count = sum(1 for word in positive_words if word in combined_text)
+        negative_count = sum(1 for word in negative_words if word in combined_text)
+        
+        stats['positive_count'] += positive_count
+        stats['negative_count'] += negative_count
+        
+        # Check for solutions
+        if 'solution' in combined_text or 'answer' in combined_text or 'solved' in combined_text:
+            stats['solutions_count'] += 1
+        
+        # Check for accepted answers
+        if discussion.get('state') == 'closed' or discussion.get('answer_chosen_at'):
+            stats['accepted_answers'] += 1
+    
+    # Calculate engagement score
+    positive_ratio = stats['positive_count'] / stats['total'] if stats['total'] > 0 else 0
+    solution_ratio = stats['solutions_count'] / stats['total'] if stats['total'] > 0 else 0
+    accepted_ratio = stats['accepted_answers'] / stats['total'] if stats['total'] > 0 else 0
+    
+    # Weighted engagement score (0-100)
+    stats['engagement_score'] = (
+        0.4 * positive_ratio + 
+        0.3 * solution_ratio + 
+        0.3 * accepted_ratio
+    ) * 100
+    
+    return stats
