@@ -3,166 +3,55 @@ from flask import Blueprint, request, jsonify
 import requests
 import os
 from datetime import datetime, timedelta
+import logging
+from ..services import get_user_repos, get_user_pulls, get_user_issues, get_user_reviews, get_repo_commits, get_user_info
 
 github_bp = Blueprint('github', __name__)
 
 @github_bp.route('/user-info/<username>', methods=['GET'])
-def get_user_info(username):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    url = f'https://api.github.com/users/{username}'
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        return jsonify(response.json())
-    else:
-        return jsonify({'error': 'User not found or API error'}), response.status_code
+def user_info(username):
+    user_info = get_user_info(username)
+    if isinstance(user_info, dict) and 'error' in user_info:
+        logging.error(f"Failed to fetch user info for {username}: {user_info['error']}")
+        return jsonify(user_info), 404
+    return jsonify(user_info)
 
 @github_bp.route('/user-repos/<username>', methods=['GET'])
-def get_user_repos(username):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/users/{username}/repos?since={two_years_ago}&per_page=100'
-    response = requests.get(url, headers=headers)
-
-    all_repos = []
-    while 'next' in response.links.keys():
-          response = requests.get(response.links['next']['url'], headers=headers)
-          all_repos.extend(response.json())
-    all_repos.extend(response.json())
-
-    if response.status_code == 200:
-        return jsonify(all_repos)
-    else:
-        return jsonify({'error': 'Could not fetch repositories'}), response.status_code
+def user_repos(username):
+    repos = get_user_repos(username)
+    if isinstance(repos, dict) and 'error' in repos:
+        logging.error(f"Failed to fetch repos for {username}: {repos['error']}")
+        return jsonify(repos), 500 if repos['error'].startswith("Error") else 404
+    return jsonify(repos)
 
 @github_bp.route('/repo-commits/<username>/<repo_name>', methods=['GET'])
-def get_repo_commits(username, repo_name):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
-    response = requests.get(url, headers=headers)
-
-    all_commits = []
-    while 'next' in response.links.keys():
-        response = requests.get(response.links['next']['url'], headers=headers)
-        all_commits.extend(response.json())
-    all_commits.extend(response.json())
-
-
-    if response.status_code == 200:
-       return jsonify(all_commits)
-    else:
-      return jsonify({'error': 'Could not fetch commits'}), response.status_code
+def repo_commits(username, repo_name):
+    commits = get_repo_commits(username, repo_name)
+    if isinstance(commits, dict) and 'error' in commits:
+        logging.error(f"Failed to fetch commits for {username}/{repo_name}: {commits['error']}")
+        return jsonify(commits), 500 if commits['error'].startswith("Error") else 404
+    return jsonify(commits)
 
 @github_bp.route('/user-pulls/<username>', methods=['GET'])
-def get_user_pulls(username):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/search/issues?q=is:pr+author:{username}+created:>={two_years_ago}&per_page=100'
-    response = requests.get(url, headers=headers)
-
-    all_pulls = []
-    while 'next' in response.links.keys():
-        response = requests.get(response.links['next']['url'], headers=headers)
-        all_pulls.extend(response.json()['items'])
-    all_pulls.extend(response.json()['items'])
-
-    if response.status_code == 200:
-        # Further processing to extract relevant PR data (e.g., merged status)
-        processed_pulls = []
-        for pull in all_pulls:
-            processed_pulls.append({
-                'id': pull['id'],
-                'title': pull['title'],
-                'created_at': pull['created_at'],
-                'closed_at': pull['closed_at'],
-                'merged': pull.get('pull_request', {}).get('merged_at') is not None,  # Check if merged
-                'url': pull['html_url'],
-                'repo_url': pull['repository_url'] # Get repo URL
-            })
-        return jsonify(processed_pulls)
-    else:
-        return jsonify({'error': 'Could not fetch pull requests'}), response.status_code
-
+def user_pulls(username):
+    pulls = get_user_pulls(username)
+    if isinstance(pulls, dict) and 'error' in pulls:
+        logging.error(f"Failed to fetch pulls for {username}: {pulls['error']}")
+        return jsonify(pulls), 500 if pulls['error'].startswith("Error") else 404
+    return jsonify(pulls)
 
 @github_bp.route('/user-issues/<username>', methods=['GET'])
-def get_user_issues(username):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/search/issues?q=is:issue+author:{username}+created:>={two_years_ago}&per_page=100'
-    response = requests.get(url, headers=headers)
-
-    all_issues = []
-    while 'next' in response.links.keys():
-        response = requests.get(response.links['next']['url'], headers=headers)
-        all_issues.extend(response.json()['items'])
-    all_issues.extend(response.json()['items'])
-
-    if response.status_code == 200:
-        #Further processing of issues
-        processed_issues = []
-        for issue in all_issues:
-            processed_issues.append({
-                'id': issue['id'],
-                'title': issue['title'],
-                'created_at': issue['created_at'],
-                'closed_at': issue['closed_at'],
-                'state': issue['state'], # Open or closed
-                'url': issue['html_url'],
-                'repo_url': issue['repository_url'] #Get repo URL
-            })
-
-        return jsonify(processed_issues)
-    else:
-        return jsonify({'error': 'Could not fetch issues'}), response.status_code
+def user_issues(username):
+    issues = get_user_issues(username)
+    if isinstance(issues, dict) and 'error' in issues:
+        logging.error(f"Failed to fetch issues for {username}: {issues['error']}")
+        return jsonify(issues), 500 if issues['error'].startswith("Error") else 404
+    return jsonify(issues)
 
 @github_bp.route('/user-reviews/<username>', methods=['GET'])
-def get_user_reviews(username):
-    headers = {
-        'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'
-    }
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    # Step 1: Get all PRs in the time frame (not authored by the user)
-    url = f'https://api.github.com/search/issues?q=is:pr+created:>={two_years_ago}&per_page=100' # Increased page size
-    response = requests.get(url, headers=headers)
-    all_pulls = []
-
-    while 'next' in response.links.keys():
-          response = requests.get(response.links['next']['url'], headers=headers)
-          all_pulls.extend(response.json()['items'])
-    all_pulls.extend(response.json()['items'])
-
-
-    review_data = []
-
-    # Step 2: Iterate through PRs and check for comments by the target user
-    for pull in all_pulls:
-        if pull['user']['login'] != username:  # Exclude PRs authored by the target user
-            comments_url = pull['comments_url']
-            comments_response = requests.get(comments_url, headers=headers)
-            if comments_response.status_code == 200:
-                comments = comments_response.json()
-                for comment in comments:
-                    if comment['user']['login'] == username:
-                        review_data.append({
-                            'pr_id': pull['id'],
-                            'pr_title': pull['title'],
-                            'comment_id': comment['id'],
-                            'comment_body': comment['body'],
-                            'comment_created_at': comment['created_at'],
-                            'pr_url': pull['html_url'],
-                            'repo_url': pull['repository_url']
-                        })
-
-    return jsonify(review_data)
+def user_reviews(username):
+    reviews = get_user_reviews(username)
+    if isinstance(reviews, dict) and 'error' in reviews:
+        logging.error(f"Failed to fetch reviews for {username}: {reviews['error']}")
+        return jsonify(reviews), 500 if reviews['error'].startswith("Error") else 404
+    return jsonify(reviews)
