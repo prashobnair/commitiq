@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 import logging
 from functools import lru_cache, wraps
 import json
+import aiohttp
 
 # Try to import Redis, but make it optional
 try:
@@ -17,6 +18,24 @@ try:
 except ImportError:
     redis_available = False
     r = None
+
+# Define constants
+BOT_IDENTIFIERS = [
+    "[bot]", 
+    "dependabot", 
+    "renovate", 
+    "github-actions", 
+    "codecov", 
+    "stale", 
+    "greenkeeper",
+    "snyk",
+    "imgbot",
+    "whitesource",
+    "codebot",
+    "travis",
+    "jenkins",
+    "circleci"
+]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -68,31 +87,94 @@ def cache_response(ttl=3600):
 # GitHub API class for rate limit handling
 class GitHubAPI:
     def __init__(self):
+        # Get tokens from environment variable (comma-separated list)
+        tokens_str = os.environ.get("GITHUB_TOKENS", os.environ.get("GITHUB_TOKEN", ""))
+        self.tokens = [t.strip() for t in tokens_str.split(',') if t.strip()]
+        
+        # Fallback to single token if no tokens list is provided
+        if not self.tokens:
+            logger.warning("No GitHub tokens found in environment variables")
+            self.tokens = [""]  # Empty token as fallback
+            
+        self.current_token_index = 0
         self.last_call = 0
-        self.headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
+        self.token_rate_limits = {token: {'remaining': 5000, 'reset_time': 0} for token in self.tokens}
+        
+    def get_token(self):
+        """Get the next available token using round-robin rotation"""
+        # If we only have one token, just return it
+        if len(self.tokens) == 1:
+            return self.tokens[0]
+            
+        # Try to find a token with remaining rate limit
+        start_index = self.current_token_index
+        while True:
+            token = self.tokens[self.current_token_index]
+            
+            # Check if this token has remaining rate limit
+            if self.token_rate_limits[token]['remaining'] > 10:
+                return token
+                
+            # Check if reset time has passed
+            if time.time() > self.token_rate_limits[token]['reset_time']:
+                # Reset the remaining count since the reset time has passed
+                self.token_rate_limits[token]['remaining'] = 5000
+                return token
+                
+            # Move to the next token
+            self.current_token_index = (self.current_token_index + 1) % len(self.tokens)
+            
+            # If we've checked all tokens and come back to the start, use the one with the earliest reset time
+            if self.current_token_index == start_index:
+                # Find token with earliest reset time
+                token = min(self.tokens, key=lambda t: self.token_rate_limits[t]['reset_time'])
+                
+                # If all tokens are rate limited, sleep until the earliest reset time
+                sleep_duration = max(self.token_rate_limits[token]['reset_time'] - time.time(), 10)
+                if sleep_duration > 0:
+                    logger.warning(f"All tokens rate limited. Sleeping for {sleep_duration} seconds")
+                    time.sleep(sleep_duration)
+                    
+                return token
         
     def make_request(self, url: str) -> requests.Response:
-        """Make a rate-limited request to the GitHub API"""
+        """Make a rate-limited request to the GitHub API using token rotation"""
+        # Get the next available token
+        token = self.get_token()
+        headers = {'Authorization': f'token {token}'} if token else {}
+        
+        # Respect GitHub's rate limits with a small delay between requests
         now = time.time()
-        if now - self.last_call < 1.1:  # Respect GitHub's rate limits
+        if now - self.last_call < 1.1:
             time.sleep(1.1 - (now - self.last_call))
         
-        response = requests.get(url, headers=self.headers)
+        response = requests.get(url, headers=headers)
         self.last_call = time.time()
         
-        # Check rate limits
-        self.handle_rate_limits(response)
+        # Update rate limit information for this token
+        self.handle_rate_limits(response, token)
         
         return response
     
-    def handle_rate_limits(self, response: requests.Response) -> None:
-        """Handle GitHub API rate limits"""
+    def handle_rate_limits(self, response: requests.Response, token: str) -> None:
+        """Handle GitHub API rate limits and update token status"""
+        # Skip if no token or not a GitHub API response
+        if not token or 'X-RateLimit-Remaining' not in response.headers:
+            return
+            
+        # Update rate limit information for this token
         remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
+        reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+        
+        self.token_rate_limits[token] = {
+            'remaining': remaining,
+            'reset_time': reset_time
+        }
+        
+        # Log warning if rate limit is getting low
         if remaining < 10:
-            reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
             sleep_duration = max(reset_time - time.time(), 10)
-            logging.warning(f"Rate limit almost reached. Sleeping for {sleep_duration} seconds")
-            time.sleep(sleep_duration)
+            logger.warning(f"Rate limit almost reached for token. Remaining: {remaining}. Reset in {sleep_duration} seconds")
 
 # --- Constants ---
 MAX_STARS = 10000  # Normalization baseline for stars
@@ -103,47 +185,22 @@ MAX_PRS = 500
 MAX_ISSUES = 500
 MAX_REVIEWS = 500
 
-BOT_IDENTIFIERS = ["[bot]", "dependabot"] # Used to filter the commits from bots
-
 # --- Helper Functions ---
 def is_bot(user_data: any) -> bool:
-    """Check if user is a bot account"""
+    """Check if user is a bot account using GitHub's official bot detection"""
     # Handle empty input
     if not user_data:
         return False
     
-    # Handle nested user objects
     if isinstance(user_data, dict):
-        login = user_data.get('login', '')
-        user_type = user_data.get('type', '')
-        
-        # Direct check for Bot type
-        if user_type == 'Bot':
-            return True
+        return user_data.get('type') == 'Bot' or any(
+            bot_id in user_data.get('login', '').lower() 
+            for bot_id in BOT_IDENTIFIERS
+        )
     else:
         # If it's a string (username), use it directly
         login = str(user_data)
-    
-    # List of common bot identifiers
-    bot_identifiers = [
-        "[bot]", 
-        "dependabot", 
-        "renovate", 
-        "github-actions", 
-        "codecov", 
-        "stale", 
-        "greenkeeper",
-        "snyk",
-        "imgbot",
-        "whitesource",
-        "codebot",
-        "travis",
-        "jenkins",
-        "circleci"
-    ]
-    
-    # Check if any bot identifier is in the login
-    return any(bot_id in login.lower() for bot_id in bot_identifiers)
+        return any(bot_id in login.lower() for bot_id in BOT_IDENTIFIERS)
 
 def calculate_commit_frequency(commits, time_window_days=730):
     """Calculates the commit frequency over a specified time window."""
@@ -183,11 +240,9 @@ def calculate_code_survival(commits: list) -> float:
     total_deletions = 0
 
     for commit in commits:
-      if not commit.get('stats'):
-          #If stats are not present, skip
-          continue
-      total_additions += commit['stats']['additions']
-      total_deletions += commit['stats']['deletions']
+        stats = commit.get('stats', {})
+        total_additions += stats.get('additions', 0)
+        total_deletions += stats.get('deletions', 0)
 
     if total_additions == 0:
         return 0 # Handle cases where additions might be zero.
@@ -590,84 +645,99 @@ def aggregate_user_data(username, async_data=None):
             
              # Aggregate commit counts and other repo-level metrics
             for repo in repos:
-                    repo_name = repo['name']
-                    repo_owner = repo['owner']['login'] if 'owner' in repo and 'login' in repo['owner'] else username
+                repo_name = repo['name']
+                repo_owner = repo['owner']['login'] if 'owner' in repo and 'login' in repo['owner'] else username
+                
+                # Check if we have commits from async fetching
+                commits = []
+                if async_data and 'repo_commits' in async_data:
+                    # Find commits for this repo in the async data
+                    for repo_data in async_data['repo_commits']:
+                        if repo_data.get('repo_name') == repo_name:
+                            if 'error' in repo_data:
+                                logging.warning(f"Error fetching commits for {repo_name}: {repo_data['error']}")
+                            else:
+                                commits = repo_data.get('commits', [])
+                            break
+                
+                # If no commits found in async data, fetch them synchronously
+                if not commits:
                     commits_response = get_repo_commits(username, repo_name)
                     
                     # Handle error responses from get_repo_commits
-                    if isinstance(commits_response, tuple) and len(commits_response) > 0 and isinstance(commits_response[0], dict) and 'error' in commits_response[0]:
-                        logging.warning(f"Error fetching commits for {repo_name}: {commits_response[0]['error']}")
+                    if isinstance(commits_response, dict) and 'error' in commits_response:
+                        logging.warning(f"Error fetching commits for {repo_name}: {commits_response['error']}")
                         commits = []  # Use empty list instead of returning error
                     else:
                         commits = commits_response
                         
-                    num_commits = len(commits)
-                    aggregated_data['total_commits'] += num_commits
-                    
-                    # Add commits to all_commits for later analysis
-                    all_commits.extend(commits)
+                num_commits = len(commits)
+                aggregated_data['total_commits'] += num_commits
+                
+                # Add commits to all_commits for later analysis
+                all_commits.extend(commits)
 
-                    # Get contributors with proper error handling
-                    api = GitHubAPI()  # Use the GitHubAPI class
-                    contributors_response = api.make_request(repo['contributors_url'])
-                    logging.debug(f"Contributors response for {repo_name}: Status {contributors_response.status_code}, Content-Type: {contributors_response.headers.get('Content-Type')}")
-                    
-                    # Handle different response types for contributors
-                    if contributors_response.status_code == 204:  # No Content
+                # Get contributors with proper error handling
+                api = GitHubAPI()  # Use the GitHubAPI class
+                contributors_response = api.make_request(repo['contributors_url'])
+                logging.debug(f"Contributors response for {repo_name}: Status {contributors_response.status_code}, Content-Type: {contributors_response.headers.get('Content-Type')}")
+                
+                # Handle different response types for contributors
+                if contributors_response.status_code == 204:  # No Content
+                    num_contributors = 0
+                elif contributors_response.status_code == 200:
+                    try:
+                        contributors_data = contributors_response.json()
+                        num_contributors = len(contributors_data)
+                    except Exception as e:
+                        logging.error(f"Error parsing contributors JSON for {repo_name}: {str(e)}")
                         num_contributors = 0
-                    elif contributors_response.status_code == 200:
-                        try:
-                            contributors_data = contributors_response.json()
-                            num_contributors = len(contributors_data)
-                        except Exception as e:
-                            logging.error(f"Error parsing contributors JSON for {repo_name}: {str(e)}")
-                            num_contributors = 0
-                    else:
-                        logging.warning(f"Unexpected status code for contributors: {contributors_response.status_code}")
-                        num_contributors = 0
-                        
-                    # Get CI/CD usage
-                    ci_cd_data = detect_ci_cd(repo_owner, repo_name)
+                else:
+                    logging.warning(f"Unexpected status code for contributors: {contributors_response.status_code}")
+                    num_contributors = 0
                     
-                    # Get release impact
-                    release_data = get_release_impact(repo_owner, repo_name)
-                    
-                    # Calculate test coverage
-                    test_coverage = calculate_test_coverage(commits)
-                    
-                    # Calculate dependency health
-                    dependency_data = analyze_dependency_updates(commits)
-                    
-                    is_original = not repo['fork']
-                    repo_data = {
-                    'name': repo_name,
-                    'url': repo['html_url'],
-                    'stars': repo['stargazers_count'],
-                    'forks': repo['forks_count'],
-                    'num_contributors': num_contributors,
-                    'commit_frequency': calculate_commit_frequency(commits),  # Implement this helper function
-                    'last_updated': repo['updated_at'],
-                    'created_at': repo['created_at'],  # <--- ADD THIS
-                    'num_commits': num_commits, # Add commit count for this repo
-                    'original': is_original,
-                    'fork' : repo['fork'],
-                    'commits': commits,  # Store commits for later use
-                    'ci_cd_usage': ci_cd_data,
-                    'release_impact': release_data,
-                    'test_coverage': test_coverage,
-                    'dependency_health': dependency_data
-                     }
-                    aggregated_data['repos'].append(repo_data)
-                    
-                    # Update aggregated CI/CD score
-                    aggregated_data['ci_cd_usage']['score'] = max(
-                        aggregated_data['ci_cd_usage']['score'],
-                        ci_cd_data.get('score', 0)
-                    )
-                    
-                    # Update aggregated dependency health
-                    aggregated_data['dependency_health']['total_dep_updates'] += dependency_data.get('total_dep_updates', 0)
-                    aggregated_data['dependency_health']['dep_files_updated'] += dependency_data.get('dep_files_updated', 0)
+                # Get CI/CD usage
+                ci_cd_data = detect_ci_cd(repo_owner, repo_name)
+                
+                # Get release impact
+                release_data = get_release_impact(repo_owner, repo_name)
+                
+                # Calculate test coverage
+                test_coverage = calculate_test_coverage(commits)
+                
+                # Calculate dependency health
+                dependency_data = analyze_dependency_updates(commits)
+                
+                is_original = not repo['fork']
+                repo_data = {
+                'name': repo_name,
+                'url': repo['html_url'],
+                'stars': repo['stargazers_count'],
+                'forks': repo['forks_count'],
+                'num_contributors': num_contributors,
+                'commit_frequency': calculate_commit_frequency(commits),  # Implement this helper function
+                'last_updated': repo['updated_at'],
+                'created_at': repo['created_at'],  # <--- ADD THIS
+                'num_commits': num_commits, # Add commit count for this repo
+                'original': is_original,
+                'fork' : repo['fork'],
+                'commits': commits,  # Store commits for later use
+                'ci_cd_usage': ci_cd_data,
+                'release_impact': release_data,
+                'test_coverage': test_coverage,
+                'dependency_health': dependency_data
+                 }
+                aggregated_data['repos'].append(repo_data)
+                
+                # Update aggregated CI/CD score
+                aggregated_data['ci_cd_usage']['score'] = max(
+                    aggregated_data['ci_cd_usage']['score'],
+                    ci_cd_data.get('score', 0)
+                )
+                
+                # Update aggregated dependency health
+                aggregated_data['dependency_health']['total_dep_updates'] += dependency_data.get('total_dep_updates', 0)
+                aggregated_data['dependency_health']['dep_files_updated'] += dependency_data.get('dep_files_updated', 0)
             
             # Calculate aggregated dependency update frequency
             if aggregated_data['total_commits'] > 0:
@@ -713,11 +783,10 @@ def aggregate_user_data(username, async_data=None):
 
 # Async version for parallel data fetching
 async def fetch_all_data(username):
-    """Parallel data fetching using asyncio"""
+    """Fetch all GitHub data for a user asynchronously."""
     try:
-        import asyncio
-        import aiohttp
         from aiohttp import ClientSession, ClientError
+        import asyncio
         
         async def fetch_data(session, url, headers):
             try:
@@ -761,12 +830,20 @@ async def fetch_all_data(username):
             url = f'https://api.github.com/search/issues?q=author:{username}+is:discussion+created:>={two_years_ago}&per_page=100'
             return await fetch_data(session, url, headers)
         
+        async def process_repo(session, repo, headers):
+            """Process a single repository to get its commits."""
+            if isinstance(repo, dict) and 'name' in repo:
+                repo_name = repo['name']
+                return await get_repo_commits_async(session, username, repo_name, headers)
+            return None
+        
         headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
         
         # Configure timeout and other session parameters
         timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds timeout
         
         async with ClientSession(timeout=timeout) as session:
+            # Fetch basic data
             pulls_task = get_pulls_async(session, headers)
             issues_task = get_issues_async(session, headers)
             repos_task = get_repos_async(session, headers)
@@ -799,6 +876,24 @@ async def fetch_all_data(username):
                 result['repos'] = {'error': f'Error fetching repos: {str(repos_data)}'}
             else:
                 result['repos'] = repos_data
+                
+                # Process repositories in parallel if repos data is valid
+                if not isinstance(repos_data, dict) or 'error' not in repos_data:
+                    # Extract repository list from the response
+                    repos_list = repos_data.get('items', []) if isinstance(repos_data, dict) and 'items' in repos_data else repos_data
+                    
+                    if repos_list and isinstance(repos_list, list):
+                        # Process all repositories in parallel
+                        repo_tasks = [process_repo(session, repo, headers) for repo in repos_list]
+                        repo_results = await asyncio.gather(*repo_tasks, return_exceptions=True)
+                        
+                        # Store repository commit data
+                        result['repo_commits'] = []
+                        for repo_result in repo_results:
+                            if isinstance(repo_result, Exception):
+                                logger.error(f"Error processing repo: {str(repo_result)}")
+                            elif repo_result:  # Skip None results
+                                result['repo_commits'].append(repo_result)
                 
             if isinstance(reviews_data, Exception):
                 logger.error(f"Error fetching reviews: {str(reviews_data)}")
@@ -1047,7 +1142,6 @@ def calculate_file_survival(commits: list) -> float:
     
     # Process commits in reverse chronological order (newest first)
     sorted_commits = sorted(commits, key=lambda c: c.get('commit', {}).get('author', {}).get('date', ''), reverse=True)
-    
     for commit in sorted_commits:
         files = commit.get('files', [])
         if not files:
@@ -1564,3 +1658,43 @@ def analyze_discussion_quality(discussions: list) -> dict:
     ) * 100
     
     return stats
+
+async def get_repo_commits_async(session, username, repo_name, headers):
+    """Fetch commits for a specific repository asynchronously."""
+    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
+    
+    all_commits = []
+    try:
+        while True:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    commits_data = await response.json()
+                    all_commits.extend(commits_data)
+                    
+                    # Check for pagination
+                    link_header = response.headers.get('Link', '')
+                    if 'rel="next"' in link_header:
+                        # Extract next URL from Link header
+                        next_url = None
+                        for link in link_header.split(','):
+                            if 'rel="next"' in link:
+                                next_url = link.split(';')[0].strip('<>')
+                                break
+                        if next_url:
+                            url = next_url
+                        else:
+                            break
+                    else:
+                        break
+                elif response.status == 409:
+                    logger.debug(f"Empty repository detected for {repo_name} (409 Conflict)")
+                    return []
+                else:
+                    logger.error(f"Error fetching commits for {repo_name}: Status {response.status} - {await response.text()}")
+                    return {'error': f'Commit fetch failed: {response.status}'}
+        
+        return {'repo_name': repo_name, 'commits': all_commits}
+    except Exception as e:
+        logger.error(f"Error in get_repo_commits_async for {repo_name}: {str(e)}")
+        return {'repo_name': repo_name, 'error': str(e)}
