@@ -148,13 +148,35 @@ class GitHubAPI:
         if now - self.last_call < 1.1:
             time.sleep(1.1 - (now - self.last_call))
         
-        response = requests.get(url, headers=headers)
-        self.last_call = time.time()
-        
-        # Update rate limit information for this token
-        self.handle_rate_limits(response, token)
-        
-        return response
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            self.last_call = time.time()
+            
+            # Handle rate limiting response with status code 403
+            if response.status_code == 403 and 'X-RateLimit-Remaining' in response.headers and int(response.headers.get('X-RateLimit-Remaining', 0)) == 0:
+                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+                wait_time = max(reset_time - time.time(), 10)
+                
+                if len(self.tokens) > 1:
+                    # If multiple tokens available, mark this one as rate-limited
+                    self.token_rate_limits[token]['remaining'] = 0
+                    self.token_rate_limits[token]['reset_time'] = reset_time
+                    # Recursive call to retry with a different token
+                    return self.make_request(url)
+                else:
+                    # Only one token available, need to wait
+                    logger.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds")
+                    time.sleep(wait_time)
+                    return self.make_request(url)
+            
+            # Update rate limit information for this token
+            self.handle_rate_limits(response, token)
+            
+            return response
+        except requests.RequestException as e:
+            logger.error(f"Request error: {str(e)}")
+            # Raise exception to be handled by caller
+            raise
     
     def handle_rate_limits(self, response: requests.Response, token: str) -> None:
         """Handle GitHub API rate limits and update token status"""
@@ -162,19 +184,24 @@ class GitHubAPI:
         if not token or 'X-RateLimit-Remaining' not in response.headers:
             return
             
-        # Update rate limit information for this token
-        remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
-        reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-        
-        self.token_rate_limits[token] = {
-            'remaining': remaining,
-            'reset_time': reset_time
-        }
-        
-        # Log warning if rate limit is getting low
-        if remaining < 10:
-            sleep_duration = max(reset_time - time.time(), 10)
-            logger.warning(f"Rate limit almost reached for token. Remaining: {remaining}. Reset in {sleep_duration} seconds")
+        # Update rate limit information for this token - use safer int conversion
+        try:
+            remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
+            reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+            
+            self.token_rate_limits[token] = {
+                'remaining': remaining,
+                'reset_time': reset_time
+            }
+            
+            # Log warning if rate limit is getting low
+            if remaining < 10:
+                sleep_duration = max(reset_time - time.time(), 10)
+                logger.warning(f"Rate limit almost reached for token. Remaining: {remaining}. Reset in {sleep_duration} seconds")
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing rate limit headers: {e}")
+            # Keep existing values if parsing fails
+            pass
 
 # --- Constants ---
 MAX_STARS = 10000  # Normalization baseline for stars
@@ -1665,34 +1692,67 @@ async def get_repo_commits_async(session, username, repo_name, headers):
     url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
     
     all_commits = []
+    retries = 3
+    retry_delay = 2  # Start with 2 seconds delay
+    
     try:
         while True:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    commits_data = await response.json()
-                    all_commits.extend(commits_data)
+            try:
+                async with session.get(url, headers=headers, timeout=30) as response:
+                    # Handle rate limiting
+                    if response.status == 403 and 'X-RateLimit-Remaining' in response.headers:
+                        remaining = int(response.headers.get('X-RateLimit-Remaining', '0'))
+                        if remaining == 0:
+                            reset_time = int(response.headers.get('X-RateLimit-Reset', '0'))
+                            wait_time = max(reset_time - time.time(), 10)
+                            logger.warning(f"Rate limit exceeded in async request. Waiting for {wait_time} seconds")
+                            await asyncio.sleep(wait_time)
+                            continue  # Retry the request
                     
-                    # Check for pagination
-                    link_header = response.headers.get('Link', '')
-                    if 'rel="next"' in link_header:
-                        # Extract next URL from Link header
-                        next_url = None
-                        for link in link_header.split(','):
-                            if 'rel="next"' in link:
-                                next_url = link.split(';')[0].strip('<>')
+                    if response.status == 200:
+                        commits_data = await response.json()
+                        all_commits.extend(commits_data)
+                        
+                        # Check for pagination
+                        link_header = response.headers.get('Link', '')
+                        if 'rel="next"' in link_header:
+                            # Extract next URL from Link header
+                            next_url = None
+                            for link in link_header.split(','):
+                                if 'rel="next"' in link:
+                                    next_url = link.split(';')[0].strip('<>')
+                                    break
+                            if next_url:
+                                url = next_url
+                            else:
                                 break
-                        if next_url:
-                            url = next_url
                         else:
                             break
+                    elif response.status == 409:
+                        logger.debug(f"Empty repository detected for {repo_name} (409 Conflict)")
+                        return {'repo_name': repo_name, 'commits': []}
+                    elif response.status == 404:
+                        logger.debug(f"Repository not found: {repo_name}")
+                        return {'repo_name': repo_name, 'commits': []}
                     else:
-                        break
-                elif response.status == 409:
-                    logger.debug(f"Empty repository detected for {repo_name} (409 Conflict)")
-                    return []
-                else:
-                    logger.error(f"Error fetching commits for {repo_name}: Status {response.status} - {await response.text()}")
-                    return {'error': f'Commit fetch failed: {response.status}'}
+                        error_text = await response.text()
+                        logger.error(f"Error fetching commits for {repo_name}: Status {response.status} - {error_text}")
+                        
+                        if retries > 0 and 500 <= response.status < 600:  # Only retry for server errors
+                            retries -= 1
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        
+                        return {'repo_name': repo_name, 'error': f'Commit fetch failed: {response.status}'}
+            except asyncio.TimeoutError:
+                if retries > 0:
+                    retries -= 1
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    logger.warning(f"Timeout fetching commits for {repo_name}. Retrying... ({retries} retries left)")
+                    continue
+                return {'repo_name': repo_name, 'error': 'Request timed out'}
         
         return {'repo_name': repo_name, 'commits': all_commits}
     except Exception as e:
