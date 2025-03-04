@@ -1,6 +1,6 @@
 # backend/app/api/analysis.py
 from flask import Blueprint, jsonify
-from ..services import aggregate_user_data, calculate_impact_score, calculate_overall_project_impact, fetch_all_data
+from ..services import aggregate_user_data, calculate_impact_score_graphql, calculate_overall_project_impact, fetch_all_data
 import logging
 import asyncio
 
@@ -37,7 +37,7 @@ def analyze_user(username):
 
         aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
         logging.debug(f"Project impact calculated: {aggregated_data['project_impact']}")
-        impact_score = calculate_impact_score(aggregated_data)
+        impact_score = calculate_impact_score_graphql(aggregated_data)
         logging.debug(f"Impact score calculated: {impact_score}")
 
         result = {
