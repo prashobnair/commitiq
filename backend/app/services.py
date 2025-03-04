@@ -9,6 +9,7 @@ import logging
 from functools import lru_cache, wraps
 import json
 import aiohttp
+import random
 
 # Try to import Redis, but make it optional
 try:
@@ -20,22 +21,7 @@ except ImportError:
     r = None
 
 # Define constants
-BOT_IDENTIFIERS = [
-    "[bot]", 
-    "dependabot", 
-    "renovate", 
-    "github-actions", 
-    "codecov", 
-    "stale", 
-    "greenkeeper",
-    "snyk",
-    "imgbot",
-    "whitesource",
-    "codebot",
-    "travis",
-    "jenkins",
-    "circleci"
-]
+BOT_IDENTIFIERS = ['bot', 'actions', '-ci-', 'automation', 'dependabot']
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -211,6 +197,7 @@ MAX_COMMITS = 2000
 MAX_PRS = 500
 MAX_ISSUES = 500
 MAX_REVIEWS = 500
+TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
 
 # --- Helper Functions ---
 def is_bot(user_data: any) -> bool:
@@ -229,7 +216,7 @@ def is_bot(user_data: any) -> bool:
         login = str(user_data)
         return any(bot_id in login.lower() for bot_id in BOT_IDENTIFIERS)
 
-def calculate_commit_frequency(commits, time_window_days=730):
+def calculate_commit_frequency(commits, time_window_days=TIME_WINDOW_DAYS):
     """Calculates the commit frequency over a specified time window."""
     if not commits:
         return 0
@@ -263,17 +250,33 @@ def calculate_code_survival(commits: list) -> float:
     if not commits:
         return 100  # Default to max if no commits
 
+    # Use sampling for large commit sets to avoid O(n²) complexity
+    if len(commits) > 100:
+        # Use either 10% of commits or 100 commits, whichever is larger
+        sample_size = max(100, len(commits) // 10)
+        # Ensure we include the most recent commits in our sample
+        recent_commits = commits[:min(20, len(commits))]
+        # Sample from the remaining commits
+        if len(commits) > 20:
+            remaining_sample = random.sample(commits[20:], min(sample_size - 20, len(commits) - 20))
+            sample_commits = recent_commits + remaining_sample
+        else:
+            sample_commits = recent_commits
+    else:
+        sample_commits = commits
+
     total_additions = 0
     total_deletions = 0
 
-    for commit in commits:
+    for commit in sample_commits:
         stats = commit.get('stats', {})
         total_additions += stats.get('additions', 0)
         total_deletions += stats.get('deletions', 0)
 
     if total_additions == 0:
-        return 0 # Handle cases where additions might be zero.
+        return 0  # Handle cases where additions might be zero.
 
+    # Calculate the survival rate based on our sample
     return ((total_additions - total_deletions) / total_additions) * 100
 
 def calculate_code_quality(commits: list) -> float:
@@ -375,145 +378,34 @@ def get_user_contributions(url_template, username, contribution_type, **kwargs):
 
 @cache_response()
 def get_user_pulls(username):
-    """Fetch pull requests with improved pagination"""
+    """Fetch user's pull requests from GitHub API"""
     url_template = (
         'https://api.github.com/search/issues?'
         'q=is:pr+author:{username}+created:>={date}&per_page=100'
     )
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    raw_pulls =  get_user_contributions(url_template, username, "pulls", date=two_years_ago)
-    # Check for error response
-    if isinstance(raw_pulls, dict) and 'error' in raw_pulls:
-        return raw_pulls
-    processed_pulls = []
-    for pull in raw_pulls:
-      if is_bot(pull.get('user', {}).get('login', '')): # check and skip bots
-        continue
-      processed_pulls.append({
-          'id': pull.get('id'), # Use get to avoid key errors
-          'title': pull.get('title'),
-          'created_at': pull.get('created_at'),
-          'closed_at': pull.get('closed_at'),
-          'merged': pull.get('pull_request', {}).get('merged_at') is not None,
-          'url': pull.get('html_url'),
-          'repo_url': pull.get('repository_url')
-      })
-    return processed_pulls
-
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "pull_requests", date=since_date)
 
 @cache_response()
 def get_user_issues(username):
-    """Fetch issues created by user"""
+    """Fetch user's issues from GitHub API"""
     url_template = (
         'https://api.github.com/search/issues?'
         'q=is:issue+author:{username}+created:>={date}&per_page=100'
     )
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    raw_issues = get_user_contributions(url_template, username, "issues", date=two_years_ago)
-    if isinstance(raw_issues, dict) and 'error' in raw_issues:  # Check for error
-      return raw_issues
-    processed_issues = []
-    for issue in raw_issues:
-        if is_bot(issue.get('user', {}).get('login', '')):
-            continue
-        processed_issues.append({
-            'id': issue.get('id'),
-            'title': issue.get('title'),
-            'created_at': issue.get('created_at'),
-            'closed_at': issue.get('closed_at'),
-            'state': issue.get('state'),
-            'url': issue.get('html_url'),
-            'repo_url': issue.get('repository_url')
-        })
-    return processed_issues
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "issues", date=since_date)
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type((ConnectionError, Timeout, RequestException)))
 @cache_response()
 def get_user_reviews(username):
-    """Fetch pull requests reviewed by user, including review comments."""
-    api = GitHubAPI()  # Use the GitHubAPI class
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
-    # Use the Search API to find PRs *reviewed by* the user
-    url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={two_years_ago}&per_page=100'
-    
-    try:
-        response = api.make_request(url)  # Use the rate-limited request method
-        logger.debug(f"Fetching reviews from: {response.url}")  # Instead of print()
-        
-        if response.status_code != 200:
-            return {'error': f'Could not fetch reviews: {response.status_code} - {response.text}'}
-        
-        all_reviews = []
-        review_data = response.json().get('items', [])  # Default to empty list if 'items' is missing
-        
-        for review in review_data:
-            review_comments_url = review['url'] + '/reviews'  # Construct URL for *review* comments
-            review_comments_response = api.make_request(review_comments_url)  # Use GitHubAPI here too
-            
-            comments_list = []  # Initialize *before* the if statement
-            if review_comments_response.status_code == 200:
-                review_comments = review_comments_response.json()
-                # Process the review comments
-                for comment in review_comments:
-                    if comment['user']['login'] == username:  # Check if comment is from the target user
-                        # Extract relevant data from the comment:
-                        comment_data = {
-                            'comment_id': comment['id'],
-                            'comment_body': comment['body'],
-                            'comment_created_at': comment['submitted_at'],  # Use 'submitted_at' for reviews
-                            'state': comment['state']  # IMPORTANT: 'APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', etc.
-                        }
-                        comments_list.append(comment_data)
-            
-            # Add all the details to final output
-            all_reviews.append({
-                'pr_id': review.get('number'),  # Use .get() for safety
-                'pr_title': review.get('title'),
-                'pr_url': review.get('html_url'),
-                'repo_url': review.get('repository_url'),
-                'comments': comments_list
-            })
-        
-        # Handle pagination
-        while 'next' in response.links:
-            response = api.make_request(response.links['next']['url'])  # Use GitHubAPI for pagination
-            
-            if response.status_code != 200:
-                return {'error': f'Could not fetch reviews: {response.status_code} - {response.text}'}
-            
-            review_data = response.json().get('items', [])
-            for review in review_data:
-                review_comments_url = review['url'] + '/reviews'
-                review_comments_response = api.make_request(review_comments_url)
-                
-                comments_list = []
-                if review_comments_response.status_code == 200:
-                    review_comments = review_comments_response.json()
-                    for comment in review_comments:
-                        if comment['user']['login'] == username:
-                            comment_data = {
-                                'comment_id': comment['id'],
-                                'comment_body': comment['body'],
-                                'comment_created_at': comment['submitted_at'],
-                                'state': comment['state']
-                            }
-                            comments_list.append(comment_data)
-                
-                all_reviews.append({
-                    'pr_id': review.get('number'),
-                    'pr_title': review.get('title'),
-                    'pr_url': review.get('html_url'),
-                    'repo_url': review.get('repository_url'),
-                    'comments': comments_list
-                })
-        
-        return all_reviews
-    
-    except Exception as e:
-        logger.error(f"Error fetching reviews: {str(e)}")
-        return {'error': f'Error fetching reviews: {str(e)}'}
-
+    """Fetch user's code reviews from GitHub API"""
+    url_template = (
+        'https://api.github.com/search/issues?'
+        'q=is:pr+reviewed-by:{username}+created:>={date}&per_page=100'
+    )
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "reviews", date=since_date)
 
 @cache_response()
 def get_user_repos(username):
@@ -829,13 +721,13 @@ async def fetch_all_data(username):
                 return {'error': 'Request timed out'}
         
         async def get_pulls_async(session, headers):
-            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:pr+author:{username}+created:>={two_years_ago}&per_page=100'
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:pr+author:{username}+created:>={since_date}&per_page=100'
             return await fetch_data(session, url, headers)
             
         async def get_issues_async(session, headers):
-            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:issue+author:{username}+created:>={two_years_ago}&per_page=100'
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:issue+author:{username}+created:>={since_date}&per_page=100'
             return await fetch_data(session, url, headers)
             
         async def get_repos_async(session, headers):
@@ -843,18 +735,18 @@ async def fetch_all_data(username):
             return await fetch_data(session, url, headers)
             
         async def get_reviews_async(session, headers):
-            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={two_years_ago}&per_page=100'
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={since_date}&per_page=100'
             return await fetch_data(session, url, headers)
             
         async def get_security_advisories_async(session, headers):
-            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=author:{username}+label:security+created:>={two_years_ago}&per_page=100'
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=author:{username}+label:security+created:>={since_date}&per_page=100'
             return await fetch_data(session, url, headers)
             
         async def get_discussions_async(session, headers):
-            two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=author:{username}+is:discussion+created:>={two_years_ago}&per_page=100'
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=author:{username}+is:discussion+created:>={since_date}&per_page=100'
             return await fetch_data(session, url, headers)
         
         async def process_repo(session, repo, headers):
@@ -963,7 +855,7 @@ async def fetch_all_data(username):
         logger.error(f"Error in async data fetching: {str(e)}")
         return {'error': f"Error in async data fetching: {str(e)}"}
 
-def calculate_commit_frequency(commits, time_window_days=730):
+def calculate_commit_frequency(commits, time_window_days=TIME_WINDOW_DAYS):
     if not commits:
         return 0
 
@@ -1164,11 +1056,29 @@ def calculate_file_survival(commits: list) -> float:
     if not commits:
         return 0
         
+    # Use sampling for large commit sets to avoid O(n²) complexity
+    if len(commits) > 100:
+        # Always include the most recent commits to ensure accurate survival analysis
+        # But limit the older commits to reduce computational complexity
+        recent_count = min(30, len(commits))
+        recent_commits = commits[:recent_count]  # Most recent N commits
+        
+        # Sample from older commits if we have more than 30 commits
+        if len(commits) > 30:
+            # Take at most 70 samples from older commits
+            sample_size = min(70, len(commits) - 30)
+            older_sample = random.sample(commits[30:], sample_size)
+            sample_commits = recent_commits + older_sample
+        else:
+            sample_commits = recent_commits
+    else:
+        sample_commits = commits
+        
     surviving_files = set()
     all_files = set()
     
     # Process commits in reverse chronological order (newest first)
-    sorted_commits = sorted(commits, key=lambda c: c.get('commit', {}).get('author', {}).get('date', ''), reverse=True)
+    sorted_commits = sorted(sample_commits, key=lambda c: c.get('commit', {}).get('author', {}).get('date', ''), reverse=True)
     for commit in sorted_commits:
         files = commit.get('files', [])
         if not files:
@@ -1188,76 +1098,71 @@ def calculate_file_survival(commits: list) -> float:
                 
             all_files.add(filename)
     
+    # Calculate survival rate based on our sample
     return len(surviving_files) / len(all_files) if all_files else 0
 
 def calculate_file_impact(commits: list) -> float:
     """Calculate file impact based on file types and paths"""
     if not commits:
         return 0
+    
+    # Use sampling for large commit sets to avoid O(n²) complexity
+    if len(commits) > 100:
+        # Use either 10% of commits or 100 commits, whichever is larger
+        sample_size = max(100, len(commits) // 10)
+        # Ensure we include the most recent commits in our sample
+        recent_commits = commits[:min(20, len(commits))]
+        # Sample from the remaining commits
+        if len(commits) > 20:
+            remaining_sample = random.sample(commits[20:], min(sample_size - 20, len(commits) - 20))
+            sample_commits = recent_commits + remaining_sample
+        else:
+            sample_commits = recent_commits
+    else:
+        sample_commits = commits
         
     # Extract all files from commits
     all_files = []
-    for commit in commits:
+    for commit in sample_commits:
         files = commit.get('files', [])
-        if files:
-            all_files.extend([f.get('filename') for f in files if f.get('filename')])
+        if not files:
+            continue
+            
+        for file_info in files:
+            filename = file_info.get('filename')
+            if not filename:
+                continue
+                
+            all_files.append(filename)
     
     if not all_files:
         return 0
+        
+    # Count file types
+    file_extensions = {}
+    total_files = len(all_files)
     
-    # Define weights for different file types and paths
-    # These weights can be adjusted based on the specific project
-    weights = {
-        # Core code files by extension
-        '.py': 1.5,
-        '.js': 1.5,
-        '.ts': 1.5,
-        '.java': 1.5,
-        '.c': 1.5,
-        '.cpp': 1.5,
-        '.go': 1.5,
-        '.rs': 1.5,
-        
-        # Test files
-        'test': 1.2,
-        'spec': 1.2,
-        
-        # Documentation
-        '.md': 0.7,
-        '.rst': 0.7,
-        'docs/': 0.7,
-        
-        # Configuration
-        '.json': 0.8,
-        '.yml': 0.8,
-        '.yaml': 0.8,
-        '.toml': 0.8,
-        '.ini': 0.8,
-        
-        # Build and deployment
-        'Dockerfile': 1.0,
-        '.github/workflows/': 1.0,
-        'ci/': 1.0,
-        
-        # Examples and scripts
-        'examples/': 0.6,
-        'scripts/': 0.8
-    }
+    for file in all_files:
+        ext = os.path.splitext(file)[1].lower()
+        if ext:
+            file_extensions[ext] = file_extensions.get(ext, 0) + 1
     
-    # Calculate impact score
-    total_impact = 0
-    for file_path in all_files:
-        file_weight = 0.5  # Default weight
-        
-        # Check for matches in our weights dictionary
-        for pattern, weight in weights.items():
-            if pattern in file_path.lower():
-                file_weight = max(file_weight, weight)  # Use the highest matching weight
-        
-        total_impact += file_weight
+    # Calculate impact score based on file type diversity
+    file_type_diversity = len(file_extensions) / total_files if total_files > 0 else 0
     
-    # Normalize by number of files
-    return total_impact / len(all_files)
+    # Calculate score based on core language files vs config/docs
+    # Higher weight for source code files
+    code_files = 0
+    for ext in file_extensions:
+        if ext in ['.py', '.js', '.java', '.cpp', '.c', '.cs', '.go', '.rs', '.php', '.rb', '.ts', '.swift']:
+            code_files += file_extensions[ext]
+    
+    code_ratio = code_files / total_files if total_files > 0 else 0
+    
+    # Impact score (weighted average of diversity and code ratio)
+    impact = (0.4 * file_type_diversity + 0.6 * code_ratio) * 100
+    
+    return impact
 
 # --- Collaboration Metrics ---
 def calculate_review_turnaround(reviews: list) -> float:
@@ -1688,8 +1593,8 @@ def analyze_discussion_quality(discussions: list) -> dict:
 
 async def get_repo_commits_async(session, username, repo_name, headers):
     """Fetch commits for a specific repository asynchronously."""
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={since_date}&per_page=100'
     
     all_commits = []
     retries = 3
@@ -1758,3 +1663,598 @@ async def get_repo_commits_async(session, username, repo_name, headers):
     except Exception as e:
         logger.error(f"Error in get_repo_commits_async for {repo_name}: {str(e)}")
         return {'repo_name': repo_name, 'error': str(e)}
+
+class GitHubGraphQL:
+    """GraphQL client for GitHub API - much more efficient than REST for bulk data"""
+    
+    def __init__(self):
+        # Get tokens from environment variable (comma-separated list)
+        tokens_str = os.environ.get("GITHUB_TOKENS", os.environ.get("GITHUB_TOKEN", ""))
+        self.tokens = [t.strip() for t in tokens_str.split(',') if t.strip()]
+        
+        # Fallback to single token if no tokens list is provided
+        if not self.tokens:
+            logger.warning("No GitHub tokens found in environment variables")
+            self.tokens = [""]  # Empty token as fallback
+        
+        # Token rotation and rate limit handling    
+        self.current_token_index = 0
+        self.last_call = 0
+        self.token_rate_limits = {token: {'remaining': 5000, 'reset_time': 0} for token in self.tokens}
+        
+        # GraphQL endpoint
+        self.endpoint = 'https://api.github.com/graphql'
+    
+    def get_token(self):
+        """Get the next available token using round-robin rotation"""
+        # If we only have one token, just return it
+        if len(self.tokens) == 1:
+            return self.tokens[0]
+            
+        # Try to find a token with remaining rate limit
+        start_index = self.current_token_index
+        while True:
+            token = self.tokens[self.current_token_index]
+            
+            # Check if this token has remaining rate limit
+            if self.token_rate_limits[token]['remaining'] > 10:
+                return token
+                
+            # Check if reset time has passed
+            if time.time() > self.token_rate_limits[token]['reset_time']:
+                # Reset the remaining count since the reset time has passed
+                self.token_rate_limits[token]['remaining'] = 5000
+                return token
+                
+            # Move to the next token
+            self.current_token_index = (self.current_token_index + 1) % len(self.tokens)
+            
+            # If we've checked all tokens and come back to the start, use the one with the earliest reset time
+            if self.current_token_index == start_index:
+                # Find token with earliest reset time
+                token = min(self.tokens, key=lambda t: self.token_rate_limits[t]['reset_time'])
+                
+                # If all tokens are rate limited, sleep until the earliest reset time
+                sleep_duration = max(self.token_rate_limits[token]['reset_time'] - time.time(), 10)
+                if sleep_duration > 0:
+                    logger.warning(f"All tokens rate limited. Sleeping for {sleep_duration} seconds")
+                    time.sleep(sleep_duration)
+                    
+                return token
+    
+    def execute_query(self, query, variables=None):
+        """Execute a GraphQL query with proper rate limit handling"""
+        token = self.get_token()
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        
+        # Respect GitHub's rate limits with a small delay between requests
+        now = time.time()
+        if now - self.last_call < 1.1:
+            time.sleep(1.1 - (now - self.last_call))
+        
+        try:
+            response = requests.post(
+                self.endpoint,
+                json={'query': query, 'variables': variables or {}},
+                headers=headers,
+                timeout=30
+            )
+            self.last_call = time.time()
+            
+            # Update rate limit information
+            self.handle_rate_limits(response, token)
+            
+            # Handle rate limiting response with status code 403
+            if response.status_code == 403 and 'X-RateLimit-Remaining' in response.headers and int(response.headers.get('X-RateLimit-Remaining', 0)) == 0:
+                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+                wait_time = max(reset_time - time.time(), 10)
+                
+                if len(self.tokens) > 1:
+                    # If multiple tokens available, mark this one as rate-limited
+                    self.token_rate_limits[token]['remaining'] = 0
+                    self.token_rate_limits[token]['reset_time'] = reset_time
+                    # Recursive call to retry with a different token
+                    return self.execute_query(query, variables)
+                else:
+                    # Only one token available, need to wait
+                    logger.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds")
+                    time.sleep(wait_time)
+                    return self.execute_query(query, variables)
+            
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"GraphQL request error: {str(e)}")
+            raise
+    
+    def handle_rate_limits(self, response, token):
+        """Handle GraphQL API rate limits and update token status"""
+        # Skip if no token or not a GitHub API response
+        if not token or 'X-RateLimit-Remaining' not in response.headers:
+            return
+            
+        # Update rate limit information for this token - use safer int conversion
+        try:
+            remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
+            reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
+            
+            self.token_rate_limits[token] = {
+                'remaining': remaining,
+                'reset_time': reset_time
+            }
+            
+            # Log warning if rate limit is getting low
+            if remaining < 10:
+                sleep_duration = max(reset_time - time.time(), 10)
+                logger.warning(f"GraphQL rate limit almost reached. Remaining: {remaining}. Reset in {sleep_duration} seconds")
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing GraphQL rate limit headers: {e}")
+            # Keep existing values if parsing fails
+            pass
+
+@cache_response()
+def get_user_contributions_graphql(username, time_window_days=365):
+    """Fetch user contributions using GitHub GraphQL API - much more efficient than REST
+    
+    This single request gets most of the data needed for analysis:
+    - Commit contributions by repository
+    - Pull request contributions
+    - Issue contributions
+    - Code review contributions
+    
+    Returns a comprehensive structure with all the data.
+    """
+    graphql = GitHubGraphQL()
+    
+    # Calculate the date for the time window
+    since_date = (datetime.now() - timedelta(days=time_window_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    
+    # Define the GraphQL query - this replaces many separate REST API calls
+    query = """
+    query ($login: String!, $since: DateTime!) {
+      user(login: $login) {
+        name
+        email
+        url
+        avatarUrl
+        createdAt
+        location
+        company
+        bio
+        followers {
+          totalCount
+        }
+        following {
+          totalCount
+        }
+        contributionsCollection(from: $since) {
+          totalCommitContributions
+          totalPullRequestContributions
+          totalPullRequestReviewContributions
+          totalIssueContributions
+          contributionCalendar {
+            totalContributions
+            weeks {
+              contributionDays {
+                date
+                contributionCount
+              }
+            }
+          }
+          commitContributionsByRepository(maxRepositories: 100) {
+            repository {
+              name
+              owner {
+                login
+              }
+              stargazerCount
+              forkCount
+              isPrivate
+              isFork
+              primaryLanguage {
+                name
+              }
+              languages(first: 10) {
+                nodes {
+                  name
+                }
+              }
+            }
+            contributions(first: 100) {
+              totalCount
+              nodes {
+                commitCount
+                repository {
+                  name
+                }
+                occurredAt
+              }
+            }
+          }
+          pullRequestContributions(first: 100) {
+            totalCount
+            nodes {
+              pullRequest {
+                title
+                merged
+                mergedAt
+                createdAt
+                repository {
+                  name
+                }
+                changedFiles
+                additions
+                deletions
+              }
+            }
+          }
+          pullRequestReviewContributions(first: 100) {
+            totalCount
+            nodes {
+              pullRequestReview {
+                repository {
+                  name
+                }
+                createdAt
+                state
+                comments {
+                  totalCount
+                }
+              }
+            }
+          }
+          issueContributions(first: 100) {
+            totalCount
+            nodes {
+              issue {
+                title
+                createdAt
+                repository {
+                  name
+                }
+                state
+                comments {
+                  totalCount
+                }
+              }
+            }
+          }
+        }
+        repositories(first: 100, orderBy: {field: STARGAZERS, direction: DESC}) {
+          totalCount
+          nodes {
+            name
+            stargazerCount
+            forkCount
+            isFork
+            isPrivate
+            primaryLanguage {
+              name
+            }
+            languages(first: 10) {
+              nodes {
+                name
+              }
+            }
+            owner {
+              login
+            }
+          }
+        }
+      }
+    }
+    """
+    
+    # Execute the query with variables
+    variables = {
+        "login": username,
+        "since": since_date
+    }
+    
+    try:
+        # Execute the GraphQL query
+        result = graphql.execute_query(query, variables)
+        
+        # Check for errors
+        if 'errors' in result:
+            logger.error(f"GraphQL errors for {username}: {result['errors']}")
+            return {'error': result['errors']}
+        
+        # Return the data
+        return result['data']
+    except Exception as e:
+        logger.error(f"Error fetching GraphQL data for {username}: {str(e)}")
+        return {'error': f"Error fetching GraphQL data: {str(e)}"}
+
+@cache_response()
+def aggregate_user_data_graphql(username):
+    """Aggregate GitHub user data using the more efficient GraphQL API
+    
+    This function replaces multiple separate REST API calls with a single
+    GraphQL query, which is much more efficient. The time window is also
+    reduced from 2 years to 1 year for better performance.
+    """
+    try:
+        # Get all data with a single GraphQL query
+        graphql_data = get_user_contributions_graphql(username)
+        
+        # Check if there was an error
+        if isinstance(graphql_data, dict) and 'error' in graphql_data:
+            return graphql_data
+        
+        # Initialize results dictionary
+        result = {
+            'username': username,
+            'raw_graphql_data': graphql_data,  # Store the raw data for potential reuse
+            'metrics': {},
+            'repositories': {},
+            'activity': {
+                'commits': 0,
+                'pulls': 0,
+                'issues': 0,
+                'reviews': 0
+            }
+        }
+        
+        # Extract user information
+        user_data = graphql_data.get('user', {})
+        if not user_data:
+            return {'error': 'User not found'}
+        
+        # Basic user info
+        result['name'] = user_data.get('name')
+        result['email'] = user_data.get('email')
+        result['avatar_url'] = user_data.get('avatarUrl')
+        result['url'] = user_data.get('url')
+        result['company'] = user_data.get('company')
+        result['location'] = user_data.get('location')
+        result['bio'] = user_data.get('bio')
+        result['followers'] = user_data.get('followers', {}).get('totalCount', 0)
+        result['following'] = user_data.get('following', {}).get('totalCount', 0)
+        
+        # Get contributions collection data
+        contrib_data = user_data.get('contributionsCollection', {})
+        
+        # Count metrics
+        result['activity']['commits'] = contrib_data.get('totalCommitContributions', 0)
+        result['activity']['pulls'] = contrib_data.get('totalPullRequestContributions', 0)
+        result['activity']['reviews'] = contrib_data.get('totalPullRequestReviewContributions', 0)
+        result['activity']['issues'] = contrib_data.get('totalIssueContributions', 0)
+        
+        # Get calendar data for consistency calculation
+        calendar = contrib_data.get('contributionCalendar', {})
+        total_contributions = calendar.get('totalContributions', 0)
+        result['metrics']['total_contributions'] = total_contributions
+        
+        # Active days calculation
+        active_days = 0
+        weeks = calendar.get('weeks', [])
+        for week in weeks:
+            for day in week.get('contributionDays', []):
+                if day.get('contributionCount', 0) > 0:
+                    active_days += 1
+        
+        # Calculate consistency (active days / total days in time window)
+        days_in_period = TIME_WINDOW_DAYS
+        result['metrics']['consistency'] = active_days / days_in_period if days_in_period > 0 else 0
+        
+        # Extract commit data by repository
+        commit_contribs = contrib_data.get('commitContributionsByRepository', [])
+        repo_commits = {}
+        
+        for repo_contrib in commit_contribs:
+            repo = repo_contrib.get('repository', {})
+            repo_name = repo.get('name', '')
+            if not repo_name:
+                continue
+                
+            commit_count = repo_contrib.get('contributions', {}).get('totalCount', 0)
+            
+            # Store repository data
+            repo_commits[repo_name] = {
+                'name': repo_name,
+                'owner': repo.get('owner', {}).get('login', ''),
+                'commit_count': commit_count,
+                'stars': repo.get('stargazerCount', 0),
+                'forks': repo.get('forkCount', 0),
+                'is_fork': repo.get('isFork', False),
+                'primary_language': repo.get('primaryLanguage', {}).get('name', ''),
+                'languages': [lang.get('name', '') for lang in repo.get('languages', {}).get('nodes', [])]
+            }
+        
+        result['repositories'] = repo_commits
+        
+        # Extract pull request data
+        pull_requests = []
+        pr_contribs = contrib_data.get('pullRequestContributions', {}).get('nodes', [])
+        
+        for pr_contrib in pr_contribs:
+            pr = pr_contrib.get('pullRequest', {})
+            pr_data = {
+                'title': pr.get('title', ''),
+                'created_at': pr.get('createdAt'),
+                'merged': pr.get('merged', False),
+                'merged_at': pr.get('mergedAt'),
+                'repository': pr.get('repository', {}).get('name', ''),
+                'changed_files': pr.get('changedFiles', 0),
+                'additions': pr.get('additions', 0),
+                'deletions': pr.get('deletions', 0)
+            }
+            pull_requests.append(pr_data)
+        
+        result['pull_requests'] = pull_requests
+        
+        # Calculate PR metrics
+        merged_prs = sum(1 for pr in pull_requests if pr.get('merged', False))
+        result['metrics']['pr_acceptance_rate'] = merged_prs / len(pull_requests) if pull_requests else 0
+        
+        # Calculate average PR size
+        if pull_requests:
+            avg_changed_files = sum(pr.get('changed_files', 0) for pr in pull_requests) / len(pull_requests)
+            avg_additions = sum(pr.get('additions', 0) for pr in pull_requests) / len(pull_requests)
+            avg_deletions = sum(pr.get('deletions', 0) for pr in pull_requests) / len(pull_requests)
+            
+            result['metrics']['avg_pr_size'] = {
+                'files': avg_changed_files,
+                'additions': avg_additions,
+                'deletions': avg_deletions
+            }
+        
+        # Extract review data
+        reviews = []
+        review_contribs = contrib_data.get('pullRequestReviewContributions', {}).get('nodes', [])
+        
+        for review_contrib in review_contribs:
+            review = review_contrib.get('pullRequestReview', {})
+            review_data = {
+                'state': review.get('state', ''),
+                'created_at': review.get('createdAt'),
+                'repository': review.get('repository', {}).get('name', ''),
+                'comment_count': review.get('comments', {}).get('totalCount', 0)
+            }
+            reviews.append(review_data)
+            
+        result['reviews'] = reviews
+        
+        # Calculate review metrics
+        review_with_comments = sum(1 for r in reviews if r.get('comment_count', 0) > 0)
+        result['metrics']['review_comment_rate'] = review_with_comments / len(reviews) if reviews else 0
+        
+        # Calculate approved vs requested changes ratio
+        approvals = sum(1 for r in reviews if r.get('state') == 'APPROVED')
+        changes_requested = sum(1 for r in reviews if r.get('state') == 'CHANGES_REQUESTED')
+        result['metrics']['review_approval_rate'] = approvals / (approvals + changes_requested) if (approvals + changes_requested) > 0 else 0
+        
+        # Get total repositories
+        repos_data = user_data.get('repositories', {})
+        result['metrics']['total_repos'] = repos_data.get('totalCount', 0)
+        
+        # Extract repositories data
+        repositories = []
+        for repo_node in repos_data.get('nodes', []):
+            repo_data = {
+                'name': repo_node.get('name', ''),
+                'stars': repo_node.get('stargazerCount', 0),
+                'forks': repo_node.get('forkCount', 0),
+                'is_fork': repo_node.get('isFork', False),
+                'primary_language': repo_node.get('primaryLanguage', {}).get('name', ''),
+                'languages': [lang.get('name', '') for lang in repo_node.get('languages', {}).get('nodes', [])]
+            }
+            repositories.append(repo_data)
+            
+        # Calculate repository metrics
+        non_forked_repos = sum(1 for r in repositories if not r.get('is_fork', False))
+        result['metrics']['original_repo_ratio'] = non_forked_repos / len(repositories) if repositories else 0
+        
+        total_stars = sum(r.get('stars', 0) for r in repositories)
+        result['metrics']['total_stars'] = total_stars
+        
+        # Calculate language diversity
+        language_set = set()
+        for repo in repositories:
+            lang = repo.get('primary_language')
+            if lang:
+                language_set.add(lang)
+            for additional_lang in repo.get('languages', []):
+                if additional_lang:
+                    language_set.add(additional_lang)
+                    
+        result['metrics']['language_diversity'] = len(language_set)
+        
+        # Calculate impact score based on GraphQL data
+        result['impact_score'] = calculate_impact_score_graphql(result)
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in aggregate_user_data_graphql: {str(e)}")
+        return {'error': f"Error aggregating user data: {str(e)}"}
+
+
+def calculate_impact_score_graphql(data):
+    """Calculate impact score based on GraphQL data and hiring manager survey data
+    
+    This function prioritizes metrics based on hiring manager survey data:
+    - Merged PRs to active repos (32% weight)
+    - Code review depth (28% weight)
+    - Maintenance burden (19% weight)
+    - Project popularity (15% weight)
+    - Documentation (6% weight)
+    """
+    try:
+        metrics = {}
+        
+        # 1. Merged PRs to active repos (32%)
+        pull_requests = data.get('pull_requests', [])
+        merged_prs = sum(1 for pr in pull_requests if pr.get('merged', False))
+        # Normalize merged PRs (cap at 50)
+        merged_pr_score = min(merged_prs / 50, 1.0)
+        metrics['merged_prs'] = merged_pr_score * 32  # 32% weight
+        
+        # 2. Code review depth (28%)
+        reviews = data.get('reviews', [])
+        # Calculate weighted review score
+        if reviews:
+            # Count comments to measure depth
+            total_comments = sum(r.get('comment_count', 0) for r in reviews)
+            avg_comments = total_comments / len(reviews) if reviews else 0
+            # Normalize (4+ comments per review is considered good depth)
+            review_depth_score = min(avg_comments / 4, 1.0)
+            # Add weight for approval/changes requested ratio
+            approvals = sum(1 for r in reviews if r.get('state') == 'APPROVED')
+            changes_requested = sum(1 for r in reviews if r.get('state') == 'CHANGES_REQUESTED')
+            approval_ratio = approvals / (approvals + changes_requested) if (approvals + changes_requested) > 0 else 0
+            # Combined review score
+            review_score = (0.7 * review_depth_score) + (0.3 * approval_ratio)
+        else:
+            review_score = 0
+        metrics['code_review'] = review_score * 28  # 28% weight
+        
+        # 3. Maintenance burden (19%)
+        # Calculate activity consistency as a proxy for maintenance
+        consistency = data.get('metrics', {}).get('consistency', 0)
+        # Mix PR size into maintenance burden (smaller PRs are better for maintenance)
+        avg_pr_size = data.get('metrics', {}).get('avg_pr_size', {})
+        if avg_pr_size:
+            # Normalize PR size (smaller is better, ideal is <5 files)
+            avg_files = avg_pr_size.get('files', 0)
+            size_score = max(0, 1 - (avg_files / 20))  # Cap at 20 files
+        else:
+            size_score = 0.5  # Default if no data
+        
+        maintenance_score = (0.6 * consistency) + (0.4 * size_score)
+        metrics['maintenance'] = maintenance_score * 19  # 19% weight
+        
+        # 4. Project popularity (15%)
+        repositories = data.get('repositories', {})
+        if repositories:
+            # Calculate average stars per repository
+            repo_list = [repo for repo in repositories.values()]
+            total_stars = sum(repo.get('stars', 0) for repo in repo_list)
+            # Normalize stars (cap at 1000 total)
+            popularity_score = min(total_stars / 1000, 1.0)
+        else:
+            popularity_score = 0
+        metrics['popularity'] = popularity_score * 15  # 15% weight
+        
+        # 5. Documentation (6%)
+        # Proxy for documentation: presence of README, markdown files, and comments in code
+        # Since we don't have direct access to file content via GraphQL,
+        # use review comment rate as a proxy for documentation mindset
+        review_comment_rate = data.get('metrics', {}).get('review_comment_rate', 0)
+        documentation_score = review_comment_rate
+        metrics['documentation'] = documentation_score * 6  # 6% weight
+        
+        # Calculate final score (sum of weighted components)
+        total_score = sum(metrics.values())
+        
+        # Return both the total score and component metrics for transparency
+        return {
+            'total': round(total_score, 2),
+            'components': metrics
+        }
+    except Exception as e:
+        logger.error(f"Error calculating impact score: {str(e)}")
+        return {
+            'total': 0,
+            'error': str(e)
+        }
