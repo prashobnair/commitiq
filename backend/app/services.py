@@ -418,10 +418,10 @@ def get_user_repos(username):
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type((ConnectionError, Timeout, RequestException)))
 @cache_response()
 def get_repo_commits(username, repo_name):
-    """Fetch commits for a specific repository, handling pagination and errors."""
-    api = GitHubAPI()  # Use the GitHubAPI class
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={two_years_ago}&per_page=100'
+    """Fetch commits for a specific repository."""
+    api = GitHubAPI()
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={since_date}&per_page=100'
 
     all_commits = []
     while True:
@@ -447,824 +447,122 @@ def get_repo_commits(username, repo_name):
 # --- Aggregation and Calculation Functions ---
 @cache_response()
 def aggregate_user_data(username, async_data=None):
-        try:
-            # Fetch data using the API functions
-            if async_data is None:
-                # If async data is not present, use the sync functions
-                pulls = get_user_pulls(username)
-                issues = get_user_issues(username)
-                reviews = get_user_reviews(username)
-                repos = get_user_repos(username)
-                security_advisories = get_security_advisories(username)
-                discussions = get_discussions(username)
-            else:
-                # If async_data is passed, unpack data
-                pulls = async_data.get('pulls', [])
-                if isinstance(pulls, dict) and 'items' in pulls:
-                    pulls = pulls.get('items', [])
-                
-                issues = async_data.get('issues', [])
-                if isinstance(issues, dict) and 'items' in issues:
-                    issues = issues.get('items', [])
-                
-                reviews = async_data.get('reviews', [])
-                if isinstance(reviews, dict) and 'items' in reviews:
-                    reviews = reviews.get('items', [])
-                
-                repos = async_data.get('repos', [])
-                
-                security_advisories = async_data.get('security_advisories', [])
-                if isinstance(security_advisories, dict) and 'items' in security_advisories:
-                    security_advisories = security_advisories.get('items', [])
-                
-                discussions = async_data.get('discussions', [])
-                if isinstance(discussions, dict) and 'items' in discussions:
-                    discussions = discussions.get('items', [])
-
-            # Check for errors
-            if isinstance(pulls, dict) and 'error' in pulls:
-                return {'error': f"Error fetching pulls: {pulls['error']}"}
-
-            if isinstance(issues, dict) and 'error' in issues:
-                return {'error': f"Error fetching issues: {issues['error']}"}
-
-            if isinstance(reviews, dict) and 'error' in reviews:  # Added check for dict
-                return {'error': f"Error fetching reviews: {reviews['error']}"}
-
-            if isinstance(repos, dict) and 'error' in repos:
-                return {'error': f"Error fetching repos: {repos['error']}"}
-                
-            # Add logging for debugging data structures
-            logging.debug(f"Pulls data type: {type(pulls)}, length: {len(pulls)}")
-            if pulls and len(pulls) > 0:
-                logging.debug(f"First pull request keys: {pulls[0].keys() if isinstance(pulls[0], dict) else 'not a dict'}")
-                
-            logging.debug(f"Repos data type: {type(repos)}, length: {len(repos)}")
-            if repos and len(repos) > 0:
-                logging.debug(f"First repo keys: {repos[0].keys() if isinstance(repos[0], dict) else 'not a dict'}")
-
-            if isinstance(security_advisories, dict) and 'error' in security_advisories:
-                logging.warning(f"Error fetching security advisories: {security_advisories['error']}")
-                security_advisories = []  # Continue with empty list instead of failing
-                
-            if isinstance(discussions, dict) and 'error' in discussions:
-                logging.warning(f"Error fetching discussions: {discussions['error']}")
-                discussions = []  # Continue with empty list instead of failing
-
-            # Process the data as before
-            # ... existing code ...
-
-            # Aggregate data
-            num_merged_prs = sum(1 for pull in pulls if pull.get('merged', False))
-            num_issues_created = len(issues)
-            num_issues_resolved =  sum(1 for issue in issues if issue['state'] == 'closed')# Count all closed ones
-            num_code_reviews = len(reviews)
-
-             # Initialize aggregated data with repo information
-            aggregated_data = {
-                'username': username,
-                'merged_prs': num_merged_prs,
-                'issues_created': num_issues_created,
-                'issues_resolved':num_issues_resolved,
-                'code_reviews': num_code_reviews,
-                'repos': [],  # Initialize an empty list for repo data
-                'total_commits': 0, #Initialize total commits
-                'project_impact': 0, # Initialize project impact score
-                'consistency': 0, # Initialize consistency score
-                'code_quality': 0, # Initialize code quality score
-                # New metrics
-                'file_impact': 0,
-                'code_survival_rate': 0,
-                'security_impact': 0,
-                'review_turnaround': calculate_review_turnaround(reviews),
-                'discussion_engagement': analyze_discussion_quality(discussions),
-                'dependency_health': {'total_dep_updates': 0, 'update_frequency': 0, 'dep_files_updated': 0},
-                'ci_cd_usage': {'score': 0}
-            }
-            # Add review details (NEW)
-            total_approved = 0
-            total_changes_requested = 0
-            total_comments = 0
-
-            for review in reviews:  # Iterate through the reviews (each review is a PR)
-              if 'comments' in review: # Check if comments key is present.
-                for comment in review['comments']: #Iterate through comments
-                  if comment['state'] == 'APPROVED':
-                      total_approved += 1
-                  elif comment['state'] == 'CHANGES_REQUESTED':
-                      total_changes_requested += 1
-                  elif comment['state'] == 'COMMENTED':
-                      total_comments += 1
-
-            aggregated_data['total_approved_reviews'] = total_approved
-            aggregated_data['total_changes_requested'] = total_changes_requested
-            aggregated_data['total_review_comments'] = total_comments #number of comments
-
-            # Collect all commits for analysis
-            all_commits = []
-            
-             # Aggregate commit counts and other repo-level metrics
-            for repo in repos:
-                repo_name = repo['name']
-                repo_owner = repo['owner']['login'] if 'owner' in repo and 'login' in repo['owner'] else username
-                
-                # Check if we have commits from async fetching
-                commits = []
-                if async_data and 'repo_commits' in async_data:
-                    # Find commits for this repo in the async data
-                    for repo_data in async_data['repo_commits']:
-                        if repo_data.get('repo_name') == repo_name:
-                            if 'error' in repo_data:
-                                logging.warning(f"Error fetching commits for {repo_name}: {repo_data['error']}")
-                            else:
-                                commits = repo_data.get('commits', [])
-                            break
-                
-                # If no commits found in async data, fetch them synchronously
-                if not commits:
-                    commits_response = get_repo_commits(username, repo_name)
-                    
-                    # Handle error responses from get_repo_commits
-                    if isinstance(commits_response, dict) and 'error' in commits_response:
-                        logging.warning(f"Error fetching commits for {repo_name}: {commits_response['error']}")
-                        commits = []  # Use empty list instead of returning error
-                    else:
-                        commits = commits_response
-                        
-                num_commits = len(commits)
-                aggregated_data['total_commits'] += num_commits
-                
-                # Add commits to all_commits for later analysis
-                all_commits.extend(commits)
-
-                # Get contributors with proper error handling
-                api = GitHubAPI()  # Use the GitHubAPI class
-                contributors_response = api.make_request(repo['contributors_url'])
-                logging.debug(f"Contributors response for {repo_name}: Status {contributors_response.status_code}, Content-Type: {contributors_response.headers.get('Content-Type')}")
-                
-                # Handle different response types for contributors
-                if contributors_response.status_code == 204:  # No Content
-                    num_contributors = 0
-                elif contributors_response.status_code == 200:
-                    try:
-                        contributors_data = contributors_response.json()
-                        num_contributors = len(contributors_data)
-                    except Exception as e:
-                        logging.error(f"Error parsing contributors JSON for {repo_name}: {str(e)}")
-                        num_contributors = 0
-                else:
-                    logging.warning(f"Unexpected status code for contributors: {contributors_response.status_code}")
-                    num_contributors = 0
-                    
-                # Get CI/CD usage
-                ci_cd_data = detect_ci_cd(repo_owner, repo_name)
-                
-                # Get release impact
-                release_data = get_release_impact(repo_owner, repo_name)
-                
-                # Calculate test coverage
-                test_coverage = calculate_test_coverage(commits)
-                
-                # Calculate dependency health
-                dependency_data = analyze_dependency_updates(commits)
-                
-                is_original = not repo['fork']
-                repo_data = {
-                'name': repo_name,
-                'url': repo['html_url'],
-                'stars': repo['stargazers_count'],
-                'forks': repo['forks_count'],
-                'num_contributors': num_contributors,
-                'commit_frequency': calculate_commit_frequency(commits),  # Implement this helper function
-                'last_updated': repo['updated_at'],
-                'created_at': repo['created_at'],  # <--- ADD THIS
-                'num_commits': num_commits, # Add commit count for this repo
-                'original': is_original,
-                'fork' : repo['fork'],
-                'commits': commits,  # Store commits for later use
-                'ci_cd_usage': ci_cd_data,
-                'release_impact': release_data,
-                'test_coverage': test_coverage,
-                'dependency_health': dependency_data
-                 }
-                aggregated_data['repos'].append(repo_data)
-                
-                # Update aggregated CI/CD score
-                aggregated_data['ci_cd_usage']['score'] = max(
-                    aggregated_data['ci_cd_usage']['score'],
-                    ci_cd_data.get('score', 0)
-                )
-                
-                # Update aggregated dependency health
-                aggregated_data['dependency_health']['total_dep_updates'] += dependency_data.get('total_dep_updates', 0)
-                aggregated_data['dependency_health']['dep_files_updated'] += dependency_data.get('dep_files_updated', 0)
-            
-            # Calculate aggregated dependency update frequency
-            if aggregated_data['total_commits'] > 0:
-                aggregated_data['dependency_health']['update_frequency'] = (
-                    aggregated_data['dependency_health']['total_dep_updates'] / 
-                    aggregated_data['total_commits']
-                )
-            
-            # Calculate code quality
-            aggregated_data['code_quality'] = calculate_code_quality(all_commits)
-            
-            # Calculate file impact and survival
-            aggregated_data['file_impact'] = calculate_file_impact(all_commits)
-            aggregated_data['code_survival_rate'] = calculate_file_survival(all_commits)
-            
-            # Calculate security impact
-            aggregated_data['security_impact'] = calculate_security_impact(all_commits, security_advisories)
-            
-            # Calculate consistency (using all contributions)
-            all_contributions = pulls + issues + reviews
-            aggregated_data['consistency'] = calculate_consistency(all_contributions)
-            
-            # Calculate overall project impact
-            aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
-            
-            # Calculate final impact score with new metrics
-            aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
-
-            return aggregated_data
-
-        except ConnectionError as e:
-            return {'error': f"Network connection error: {str(e)}"}
-        except Timeout as e:
-            return {'error': f"Request timed out: {str(e)}"}
-        except TooManyRedirects as e:
-            return {'error': f"Too many redirects: {str(e)}"}
-        except RequestException as e:  # Catch-all for other request exceptions
-            logger.error(f"Request error: {str(e)}")
-            return {'error': f"Request error: {str(e)}"}
-        except Exception as e:
-            logging.exception(f"Unexpected error in aggregate_user_data: {str(e)}")
-            return {'error': f"An unexpected error occurred: {str(e)}"}
-
-# Async version for parallel data fetching
-async def fetch_all_data(username):
-    """Fetch all GitHub data for a user asynchronously."""
-    try:
-        from aiohttp import ClientSession, ClientError
-        import asyncio
-        
-        async def fetch_data(session, url, headers):
-            try:
-                async with session.get(url, headers=headers) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    return {'error': f'Error: {response.status} - {await response.text()}'}
-            except ClientError as e:
-                logger.error(f"Client error for {url}: {str(e)}")
-                return {'error': f'Client error: {str(e)}'}
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout for {url}")
-                return {'error': 'Request timed out'}
-        
-        async def get_pulls_async(session, headers):
-            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:pr+author:{username}+created:>={since_date}&per_page=100'
-            return await fetch_data(session, url, headers)
-            
-        async def get_issues_async(session, headers):
-            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:issue+author:{username}+created:>={since_date}&per_page=100'
-            return await fetch_data(session, url, headers)
-            
-        async def get_repos_async(session, headers):
-            url = f'https://api.github.com/users/{username}/repos?per_page=100'
-            return await fetch_data(session, url, headers)
-            
-        async def get_reviews_async(session, headers):
-            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={since_date}&per_page=100'
-            return await fetch_data(session, url, headers)
-            
-        async def get_security_advisories_async(session, headers):
-            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=author:{username}+label:security+created:>={since_date}&per_page=100'
-            return await fetch_data(session, url, headers)
-            
-        async def get_discussions_async(session, headers):
-            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-            url = f'https://api.github.com/search/issues?q=author:{username}+is:discussion+created:>={since_date}&per_page=100'
-            return await fetch_data(session, url, headers)
-        
-        async def process_repo(session, repo, headers):
-            """Process a single repository to get its commits."""
-            if isinstance(repo, dict) and 'name' in repo:
-                repo_name = repo['name']
-                return await get_repo_commits_async(session, username, repo_name, headers)
-            return None
-        
-        headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
-        
-        # Configure timeout and other session parameters
-        timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds timeout
-        
-        async with ClientSession(timeout=timeout) as session:
-            # Fetch basic data
-            pulls_task = get_pulls_async(session, headers)
-            issues_task = get_issues_async(session, headers)
-            repos_task = get_repos_async(session, headers)
-            reviews_task = get_reviews_async(session, headers)
-            security_task = get_security_advisories_async(session, headers)
-            discussions_task = get_discussions_async(session, headers)
-            
-            pulls_data, issues_data, repos_data, reviews_data, security_data, discussions_data = await asyncio.gather(
-                pulls_task, issues_task, repos_task, reviews_task, security_task, discussions_task,
-                return_exceptions=True  # Don't let one failure stop everything
-            )
-            
-            # Handle any exceptions from the tasks
-            result = {}
-            
-            if isinstance(pulls_data, Exception):
-                logger.error(f"Error fetching pulls: {str(pulls_data)}")
-                result['pulls'] = {'error': f'Error fetching pulls: {str(pulls_data)}'}
-            else:
-                result['pulls'] = pulls_data
-                
-            if isinstance(issues_data, Exception):
-                logger.error(f"Error fetching issues: {str(issues_data)}")
-                result['issues'] = {'error': f'Error fetching issues: {str(issues_data)}'}
-            else:
-                result['issues'] = issues_data
-                
-            if isinstance(repos_data, Exception):
-                logger.error(f"Error fetching repos: {str(repos_data)}")
-                result['repos'] = {'error': f'Error fetching repos: {str(repos_data)}'}
-            else:
-                result['repos'] = repos_data
-                
-                # Process repositories in parallel if repos data is valid
-                if not isinstance(repos_data, dict) or 'error' not in repos_data:
-                    # Extract repository list from the response
-                    repos_list = repos_data.get('items', []) if isinstance(repos_data, dict) and 'items' in repos_data else repos_data
-                    
-                    if repos_list and isinstance(repos_list, list):
-                        # Process all repositories in parallel
-                        repo_tasks = [process_repo(session, repo, headers) for repo in repos_list]
-                        repo_results = await asyncio.gather(*repo_tasks, return_exceptions=True)
-                        
-                        # Store repository commit data
-                        result['repo_commits'] = []
-                        for repo_result in repo_results:
-                            if isinstance(repo_result, Exception):
-                                logger.error(f"Error processing repo: {str(repo_result)}")
-                            elif repo_result:  # Skip None results
-                                result['repo_commits'].append(repo_result)
-                
-            if isinstance(reviews_data, Exception):
-                logger.error(f"Error fetching reviews: {str(reviews_data)}")
-                result['reviews'] = {'error': f'Error fetching reviews: {str(reviews_data)}'}
-            else:
-                result['reviews'] = reviews_data
-                
-            if isinstance(security_data, Exception):
-                logger.error(f"Error fetching security advisories: {str(security_data)}")
-                result['security_advisories'] = {'error': f'Error fetching security advisories: {str(security_data)}'}
-            else:
-                result['security_advisories'] = security_data
-                
-            if isinstance(discussions_data, Exception):
-                logger.error(f"Error fetching discussions: {str(discussions_data)}")
-                result['discussions'] = {'error': f'Error fetching discussions: {str(discussions_data)}'}
-            else:
-                result['discussions'] = discussions_data
-            
-            return result
-            
-    except ImportError:
-        logger.warning("aiohttp not installed, falling back to synchronous fetching")
-        # Fall back to synchronous fetching
-        return {
-            'pulls': get_user_pulls(username),
-            'issues': get_user_issues(username),
-            'repos': get_user_repos(username),
-            'reviews': get_user_reviews(username),
-            'security_advisories': get_security_advisories(username),
-            'discussions': get_discussions(username)
-        }
-    except ClientError as e:
-        logger.error(f"Network error in async operation: {str(e)}")
-        return {'error': f"Network error: {str(e)}"}
-    except asyncio.TimeoutError:
-        logger.error("Async operation timed out")
-        return {'error': "Operation timed out"}
-    except Exception as e:
-        logger.error(f"Error in async data fetching: {str(e)}")
-        return {'error': f"Error in async data fetching: {str(e)}"}
-
-def calculate_commit_frequency(commits, time_window_days=TIME_WINDOW_DAYS):
-    if not commits:
-        return 0
-
-    commit_dates = []
-    for commit in commits:
-        try:
-            # Correctly handle potential missing 'commit' or 'author' keys
-            commit_date_str = commit.get('commit', {}).get('author', {}).get('date')
-            if commit_date_str:
-                commit_dates.append(datetime.strptime(commit_date_str, '%Y-%m-%dT%H:%M:%SZ'))
-        except (ValueError, TypeError) as e:
-            logging.error(f"Error parsing commit date: {e}, commit: {commit}")
-            # Could choose to skip this commit, or re-raise the exception
-            continue  # Skip this commit and continue with the next
-
-    if not commit_dates:
-        return 0
-
-    # Calculate commits within the time window
-    two_years_ago = datetime.now() - timedelta(days=time_window_days)
-    commits_in_window = [date for date in commit_dates if date >= two_years_ago]
-
-    if not commits_in_window:
-        return 0
-
-    return len(commits_in_window) / time_window_days
-
-def normalize_metric(value, max_value):
-    """Normalizes a metric to a 0-1 range."""
-    if value is None:
-        return 0
-    return min(value / max_value, 1.0)
-
-
-def calculate_impact_score(aggregated_data: dict) -> float:
-    """Calculates the Impact Score based on the aggregated data (normalized)."""
-    # Enhanced weights based on industry research and new metrics
-    weights = {
-        # Core contribution metrics
-        'merged_prs': 0.15,
-        'code_quality': 0.12,
-        'project_impact': 0.15,
-        
-        # New code evolution metrics
-        'file_impact': 0.08,
-        'code_survival_rate': 0.05,
-        
-        # Collaboration metrics
-        'review_quality': 0.10,
-        'review_turnaround': 0.05,
-        
-        # Project health metrics
-        'ci_cd_usage': 0.06,
-        'test_coverage': 0.06,
-        
-        # Security metrics
-        'security_impact': 0.08,
-        
-        # Maintenance metrics
-        'dependency_health': 0.05,
-        
-        # Community engagement
-        'discussion_engagement': 0.05,
-        
-        # Consistency over time
-        'consistency': 0.05
+    """
+    Aggregates all GitHub data for a user.
+    Can use pre-fetched async data (more efficient) or fetch synchronously.
+    
+    Returns a comprehensive object with metrics, scores, and raw data.
+    """
+    start_time = time.time()
+    logging.info(f"Starting aggregation for {username}")
+    
+    # Use async data if provided, otherwise fetch synchronously
+    if async_data:
+        pulls_data = async_data.get('pulls', [])
+        issues_data = async_data.get('issues', [])
+        repos_data = async_data.get('repos', [])
+        reviews_data = async_data.get('reviews', [])
+        discussions_data = async_data.get('discussions', [])
+    else:
+        # Fetch data synchronously (slower)
+        pulls_data = get_user_pulls(username)
+        issues_data = get_user_issues(username)
+        repos_data = get_user_repos(username)
+        reviews_data = get_user_reviews(username)
+        discussions_data = get_discussions(username)
+    
+    # Initialize result structure
+    aggregated_data = {
+        'username': username,
+        'total_contributions': 0,
+        'total_commits': 0,
+        'total_prs': 0,
+        'merged_prs': 0,
+        'total_issues': 0,
+        'total_reviews': 0,
+        'total_approved_reviews': 0,
+        'total_review_comments': 0,
+        'total_comments': 0,
+        'code_quality': 0,
+        'code_survival_rate': 0,
+        'file_impact': 0,
+        'consistency': 0,
+        'project_impact': 0,
+        'avg_pr_size': 0,
+        'avg_issue_comments': 0,
+        'repos': [],
+        'top_languages': {},
+        'impact_score': 0
     }
     
-    # Calculate review quality score
-    total_reviews = aggregated_data.get('total_review_comments', 0) or 1  # Avoid division by zero
-    approved_ratio = aggregated_data.get('total_approved_reviews', 0) / total_reviews
-    
-    # Normalize review turnaround (lower is better)
-    # Assume 48 hours is the maximum reasonable turnaround time
-    turnaround_hours = aggregated_data.get('review_turnaround', 48)
-    normalized_turnaround = 1.0 - min(turnaround_hours / 48.0, 1.0)
-    
-    # Get CI/CD usage score
-    ci_cd_score = aggregated_data.get('ci_cd_usage', {}).get('score', 0)
-    
-    # Get dependency health score
-    dep_update_frequency = aggregated_data.get('dependency_health', {}).get('update_frequency', 0)
-    normalized_dep_health = min(dep_update_frequency * 5, 1.0)  # Normalize: 20% updates is considered good
-    
-    # Get discussion engagement score
-    discussion_score = aggregated_data.get('discussion_engagement', {}).get('engagement_score', 0) / 100.0
-    
-    # Calculate the final impact score
-    impact_score = (
-        # Core contribution metrics
-        weights['merged_prs'] * normalize_metric(aggregated_data.get('merged_prs', 0), MAX_PRS) +
-        weights['code_quality'] * (aggregated_data.get('code_quality', 0) / 100) +
-        weights['project_impact'] * (aggregated_data.get('project_impact', 0) / 100) +
+    # Process repositories and their commits
+    all_commits = []
+    for repo_data in repos_data:
+        if isinstance(repo_data, dict) and 'error' in repo_data:
+            continue  # Skip error repos
+            
+        repo_owner = repo_data.get('owner', {}).get('login', username)
+        repo_name = repo_data.get('name', '')
         
-        # New code evolution metrics
-        weights['file_impact'] * aggregated_data.get('file_impact', 0) +
-        weights['code_survival_rate'] * (aggregated_data.get('code_survival_rate', 0) / 100) +
-        
-        # Collaboration metrics
-        weights['review_quality'] * approved_ratio +
-        weights['review_turnaround'] * normalized_turnaround +
-        
-        # Project health metrics
-        weights['ci_cd_usage'] * ci_cd_score +
-        weights['test_coverage'] * (aggregated_data.get('test_coverage', 0) / 100) +
-        
-        # Security metrics
-        weights['security_impact'] * (aggregated_data.get('security_impact', 0) / 100) +
-        
-        # Maintenance metrics
-        weights['dependency_health'] * normalized_dep_health +
-        
-        # Community engagement
-        weights['discussion_engagement'] * discussion_score +
-        
-        # Consistency over time
-        weights['consistency'] * aggregated_data.get('consistency', 0)
-    ) * 100
-
-    return min(impact_score, 100)  # Convert to percentage and cap at 100
-
-def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
-    """Calculate impact score for a single repository"""
-    if is_original:
-        originality_weight = 0.7  # High weight for original repos
-    else:
-        originality_weight = 0.1  # Low weight for forked repos
-
-    stars_weight = 0.15
-    forks_weight = 0.05  # Significantly reduced
-    contributors_weight = 0.1
-
-    # Normalize stars/forks (example - adjust as needed)
-    max_stars = 10000  # Example maximum - could be based on data analysis
-    max_forks = 50000  # Example maximum
-    max_contributors = 100 # Example
-
-    normalized_stars = min(repo_data['stars'] / max_stars, 1.0)  # Cap at 1.0
-    normalized_forks = min(repo_data['forks'] / max_forks, 1.0)
-    normalized_contributors = min(repo_data['num_contributors'] / max_contributors, 1.0)
-
-    # Age Factor (example - adjust as needed)
-    # You'll need to get the repo creation date and calculate the age
-    repo_created_at = datetime.strptime(repo_data['created_at'], '%Y-%m-%dT%H:%M:%SZ') # Add created_at to your repo data
-    repo_age_years = (datetime.now() - repo_created_at).days / 365.25
-    age_factor = 1 / (1 + repo_age_years)  # Example: 1-year-old repo -> factor of 0.5, 5-year-old -> ~0.16
-
-    #Combine
-    project_impact_score = (
-        originality_weight +
-        (1-originality_weight)* (stars_weight * normalized_stars +
-        forks_weight * normalized_forks +
-        contributors_weight * normalized_contributors)
-        ) * age_factor
-
-    return project_impact_score
-
-def calculate_overall_project_impact(aggregated_data: dict) -> float:
-    """Calculate overall project impact based on individual repo impacts"""
-    # Calculate overall project impact based on individual repo impacts
-    total_impact = 0
-    
-    # Check if repos is a list before iterating
-    repos = aggregated_data.get('repos', [])
-    if not isinstance(repos, list):
-        logging.error(f"Expected repos to be a list, got {type(repos)}: {repos}")
-        return 0
-        
-    for repo in repos:
-        is_original = not repo.get('fork',False) #check if the repo is forked.
-        repo['impact_score'] = calculate_project_impact(repo, is_original)  # Calculate individual repo impact and pass is_original
-        total_impact += repo['impact_score']
-    return total_impact
-
-# Add this function after the other get_user_* functions
-@cache_response()
-def get_user_info(username):
-    """Fetch user information from GitHub API"""
-    api = GitHubAPI()
-    url = f'https://api.github.com/users/{username}'
-    try:
-        response = api.make_request(url)
-        response.raise_for_status()
-        return response.json()
-    except RequestException as e:
-        logger.error(f"Error fetching user info: {str(e)}")
-        return {'error': f"Error fetching user info: {str(e)}"}
-    except ValueError as e:
-        logger.error(f"JSON parsing error for user info: {str(e)}")
-        return {'error': f"JSON parsing error: {str(e)}"}
-    except Exception as e:
-        logger.error(f"Unexpected error fetching user info: {str(e)}")
-        return {'error': f"Unexpected error: {str(e)}"}
-
-# --- New Code Evolution Metrics ---
-def calculate_file_survival(commits: list) -> float:
-    """Calculate percentage of files still present in latest commit"""
-    if not commits:
-        return 0
-        
-    # Use sampling for large commit sets to avoid O(n²) complexity
-    if len(commits) > 100:
-        # Always include the most recent commits to ensure accurate survival analysis
-        # But limit the older commits to reduce computational complexity
-        recent_count = min(30, len(commits))
-        recent_commits = commits[:recent_count]  # Most recent N commits
-        
-        # Sample from older commits if we have more than 30 commits
-        if len(commits) > 30:
-            # Take at most 70 samples from older commits
-            sample_size = min(70, len(commits) - 30)
-            older_sample = random.sample(commits[30:], sample_size)
-            sample_commits = recent_commits + older_sample
-        else:
-            sample_commits = recent_commits
-    else:
-        sample_commits = commits
-        
-    surviving_files = set()
-    all_files = set()
-    
-    # Process commits in reverse chronological order (newest first)
-    sorted_commits = sorted(sample_commits, key=lambda c: c.get('commit', {}).get('author', {}).get('date', ''), reverse=True)
-    for commit in sorted_commits:
-        files = commit.get('files', [])
-        if not files:
+        if not repo_name:
             continue
             
-        for file_info in files:
-            filename = file_info.get('filename')
-            if not filename:
-                continue
-                
-            status = file_info.get('status')
-            
-            if status == 'removed':
-                surviving_files.discard(filename)
-            else:  # added or modified
-                surviving_files.add(filename)
-                
-            all_files.add(filename)
-    
-    # Calculate survival rate based on our sample
-    return len(surviving_files) / len(all_files) if all_files else 0
-
-def calculate_file_impact(commits: list) -> float:
-    """Calculate file impact based on file types and paths"""
-    if not commits:
-        return 0
-    
-    # Use sampling for large commit sets to avoid O(n²) complexity
-    if len(commits) > 100:
-        # Use either 10% of commits or 100 commits, whichever is larger
-        sample_size = max(100, len(commits) // 10)
-        # Ensure we include the most recent commits in our sample
-        recent_commits = commits[:min(20, len(commits))]
-        # Sample from the remaining commits
-        if len(commits) > 20:
-            remaining_sample = random.sample(commits[20:], min(sample_size - 20, len(commits) - 20))
-            sample_commits = recent_commits + remaining_sample
-        else:
-            sample_commits = recent_commits
-    else:
-        sample_commits = commits
-        
-    # Extract all files from commits
-    all_files = []
-    for commit in sample_commits:
-        files = commit.get('files', [])
-        if not files:
-            continue
-            
-        for file_info in files:
-            filename = file_info.get('filename')
-            if not filename:
-                continue
-                
-            all_files.append(filename)
-    
-    if not all_files:
-        return 0
-        
-    # Count file types
-    file_extensions = {}
-    total_files = len(all_files)
-    
-    for file in all_files:
-        ext = os.path.splitext(file)[1].lower()
-        if ext:
-            file_extensions[ext] = file_extensions.get(ext, 0) + 1
-    
-    # Calculate impact score based on file type diversity
-    file_type_diversity = len(file_extensions) / total_files if total_files > 0 else 0
-    
-    # Calculate score based on core language files vs config/docs
-    # Higher weight for source code files
-    code_files = 0
-    for ext in file_extensions:
-        if ext in ['.py', '.js', '.java', '.cpp', '.c', '.cs', '.go', '.rs', '.php', '.rb', '.ts', '.swift']:
-            code_files += file_extensions[ext]
-    
-    code_ratio = code_files / total_files if total_files > 0 else 0
-    
-    # Impact score (weighted average of diversity and code ratio)
-    impact = (0.4 * file_type_diversity + 0.6 * code_ratio) * 100
-    
-    return impact
-
-# --- Collaboration Metrics ---
-def calculate_review_turnaround(reviews: list) -> float:
-    """Calculate average PR review turnaround time in hours"""
-    if not reviews:
-        return 0
-        
-    total_time = 0
-    valid_reviews = 0
-    
-    for review in reviews:
-        # Skip reviews without necessary data
-        if not review.get('comments'):
-            continue
-            
-        for comment in review.get('comments', []):
-            # Skip comments without necessary timestamps
-            if not comment.get('comment_created_at'):
-                continue
-                
-            try:
-                # Get PR creation time from the review object
-                pr_url = review.get('pr_url', '')
-                if not pr_url:
-                    continue
-                    
-                # Extract PR number and repo from URL
-                parts = pr_url.split('/')
-                if len(parts) < 7:
-                    continue
-                    
-                repo_owner = parts[3]
-                repo_name = parts[4]
-                pr_number = parts[6]
-                
-                # Fetch PR details to get creation time
-                api = GitHubAPI()
-                pr_url = f'https://api.github.com/repos/{repo_owner}/{repo_name}/pulls/{pr_number}'
-                pr_response = api.make_request(pr_url)
-                
-                if pr_response.status_code != 200:
-                    continue
-                    
-                pr_data = pr_response.json()
-                pr_created_at = pr_data.get('created_at')
-                
-                if not pr_created_at:
-                    continue
-                
-                # Calculate time difference
-                pr_created = datetime.strptime(pr_created_at, '%Y-%m-%dT%H:%M:%SZ')
-                review_time = datetime.strptime(comment['comment_created_at'], '%Y-%m-%dT%H:%M:%SZ')
-                
-                # Only count if review is after PR creation
-                if review_time > pr_created:
-                    time_diff = (review_time - pr_created).total_seconds() / 3600  # Convert to hours
-                    total_time += time_diff
-                    valid_reviews += 1
-                    
-            except (KeyError, ValueError, Exception) as e:
-                logging.error(f"Error calculating review turnaround: {str(e)}")
-                continue
-    
-    return total_time / valid_reviews if valid_reviews else 0
-
-# --- Project Health Metrics ---
-def detect_ci_cd(repo_owner: str, repo_name: str) -> dict:
-    """Detect CI/CD usage in repository"""
-    api = GitHubAPI()
-    
-    # Common CI/CD configuration paths
-    paths = [
-        '.github/workflows',           # GitHub Actions
-        '.circleci/config.yml',        # CircleCI
-        '.travis.yml',                 # Travis CI
-        'azure-pipelines.yml',         # Azure Pipelines
-        'Jenkinsfile',                 # Jenkins
-        '.gitlab-ci.yml',              # GitLab CI
-        'bitbucket-pipelines.yml',     # Bitbucket Pipelines
-        '.drone.yml',                  # Drone CI
-        'appveyor.yml',                # AppVeyor
-        'cloudbuild.yaml',             # Google Cloud Build
-        'buildspec.yml',               # AWS CodeBuild
-        '.teamcity/'                   # TeamCity
-    ]
-    
-    ci_cd_results = {}
-    
-    for path in paths:
-        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path}"
+        # Get repository commits
         try:
-            response = api.make_request(url)
-            ci_cd_results[path] = response.status_code == 200
+            commits_data = get_repo_commits(username, repo_name)
         except Exception as e:
-            logging.error(f"Error checking CI/CD path {path}: {str(e)}")
-            ci_cd_results[path] = False
+            logger.error(f"Error fetching commits for {repo_name}: {str(e)}")
+            commits_data = {'error': str(e)}
+            
+        if isinstance(commits_data, dict) and 'error' in commits_data:
+            # Log error but continue with next repo
+            logger.warning(f"Error fetching commits for {repo_name}: {commits_data['error']}")
+            repo_data['commits'] = []
+        else:
+            repo_data['commits'] = commits_data
+            
+            # Add to total commit count
+            if commits_data and isinstance(commits_data, list):
+                aggregated_data['total_commits'] += len(commits_data)
+                all_commits.extend(commits_data)
+            
+            # Get contributor count for this repo
+            try:
+                contributors_url = repo_data.get('contributors_url', '')
+                if contributors_url:
+                    api = GitHubAPI()
+                    contributors_response = api.make_request(contributors_url)
+                    if contributors_response.status_code == 200:
+                        contributors = contributors_response.json()
+                        repo_data['num_contributors'] = len(contributors)
+                    else:
+                        repo_data['num_contributors'] = 1  # Default if can't fetch
+                else:
+                    repo_data['num_contributors'] = 1  # Default
+            except Exception as e:
+                logger.error(f"Error fetching contributors for {repo_name}: {str(e)}")
+                repo_data['num_contributors'] = 1  # Default
+                
+            # Calculate code quality and survival for this repo
+            if commits_data and isinstance(commits_data, list) and len(commits_data) > 0:
+                repo_data['code_quality'] = calculate_code_quality(commits_data)
+                repo_data['code_survival'] = calculate_code_survival(commits_data)
+                # Remove file_impact calculation as it's not part of our key metrics
+                
+                # Remove review turnaround calculation as it's not part of our key metrics
+                
+                # Calculate test coverage
+                repo_data['test_coverage'] = calculate_test_coverage(commits_data)
+                
+            # Add repo to aggregated data
+            aggregated_data['repos'].append(repo_data)
     
-    # Calculate overall CI/CD score (percentage of detected CI/CD systems)
-    ci_cd_results['score'] = sum(1 for v in ci_cd_results.values() if v) / len(paths)
+    # Calculate overall metrics that matter for our 5 key metrics
+    aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
+    aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
     
-    return ci_cd_results
+    logging.info(f"Aggregation completed in {time.time() - start_time:.2f} seconds")
+    return aggregated_data
 
 def calculate_test_coverage(commits: list) -> float:
     """Estimate test coverage through commit patterns and file analysis"""
@@ -1322,8 +620,8 @@ def get_security_advisories(username: str) -> list:
         'https://api.github.com/search/issues?'
         'q=author:{username}+label:security+created:>={date}&per_page=100'
     )
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "security_advisories", date=two_years_ago)
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "security_advisories", date=since_date)
 
 def calculate_security_impact(commits: list, advisories: list) -> float:
     """Calculate security impact score based on commits and advisories"""
@@ -1518,13 +816,10 @@ def get_release_impact(repo_owner: str, repo_name: str) -> dict:
 
 # --- Community Engagement Metrics ---
 def get_discussions(username: str) -> list:
-    """Fetch user's discussion participation"""
-    url_template = (
-        'https://api.github.com/search/issues?'
-        'q=author:{username}+is:discussion+created:>={date}&per_page=100'
-    )
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "discussions", date=two_years_ago)
+    """Fetch GitHub discussions created by the user"""
+    url_template = 'https://api.github.com/search/discussions?q=author:{username}+created:>={date}&per_page=100'
+    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return get_user_contributions(url_template, username, "discussions", date=since_date)
 
 def analyze_discussion_quality(discussions: list) -> dict:
     """Analyze discussion engagement quality"""
@@ -2259,3 +1554,242 @@ def calculate_impact_score_graphql(data):
             'total': 0,
             'error': str(e)
         }
+
+def calculate_impact_score(aggregated_data: dict) -> float:
+    """A wrapper around calculate_impact_score_graphql for backward compatibility.
+    
+    This function prioritizes metrics based on hiring manager survey data:
+    - Merged PRs to active repos (32% weight)
+    - Code review depth (28% weight)
+    - Maintenance burden (19% weight)
+    - Project popularity (15% weight)
+    - Documentation (6% weight)
+    """
+    # Simply call the GraphQL version now to ensure consistent scoring
+    result = calculate_impact_score_graphql(aggregated_data)
+    if isinstance(result, dict) and 'total' in result:
+        return result['total']
+    return 0  # Default to 0 if there's an error
+
+# Add this function after the other get_user_* functions
+@cache_response()
+def get_user_info(username):
+    """Fetch user information from GitHub API"""
+    api = GitHubAPI()
+    url = f'https://api.github.com/users/{username}'
+    try:
+        response = api.make_request(url)
+        response.raise_for_status()
+        return response.json()
+    except RequestException as e:
+        logger.error(f"Error fetching user info: {str(e)}")
+        return {'error': f"Error fetching user info: {str(e)}"}
+    except ValueError as e:
+        logger.error(f"JSON parsing error for user info: {str(e)}")
+        return {'error': f"JSON parsing error: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Unexpected error fetching user info: {str(e)}")
+        return {'error': f"Unexpected error: {str(e)}"}
+
+def calculate_overall_project_impact(aggregated_data: dict) -> float:
+    """Calculate overall project impact based on individual repo impacts"""
+    # Calculate overall project impact based on individual repo impacts
+    total_impact = 0
+    
+    # Check if repos is a list before iterating
+    repos = aggregated_data.get('repos', [])
+    if not isinstance(repos, list):
+        logging.error(f"Expected repos to be a list, got {type(repos)}: {repos}")
+        return 0
+        
+    for repo in repos:
+        is_original = not repo.get('fork', False)  # check if the repo is forked
+        repo['impact_score'] = calculate_project_impact(repo, is_original)  # Calculate individual repo impact
+        total_impact += repo['impact_score']
+    
+    # Normalize to a 0-100 scale
+    return min(total_impact * 100, 100)
+
+def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
+    """Calculate impact score for a single repository"""
+    if not isinstance(repo_data, dict):
+        return 0
+        
+    # Higher weight for original repos vs forks
+    if is_original:
+        originality_weight = 0.7  # High weight for original repos
+    else:
+        originality_weight = 0.1  # Low weight for forked repos
+
+    stars_weight = 0.15
+    forks_weight = 0.05  # Significantly reduced
+    contributors_weight = 0.1
+
+    # Normalize stars/forks
+    max_stars = 10000  # Maximum for normalization
+    max_forks = 50000  # Maximum for normalization
+    max_contributors = 100  # Maximum for normalization
+
+    normalized_stars = min(repo_data.get('stars', 0) / max_stars, 1.0)  # Cap at 1.0
+    normalized_forks = min(repo_data.get('forks', 0) / max_forks, 1.0)
+    normalized_contributors = min(repo_data.get('num_contributors', 1) / max_contributors, 1.0)
+
+    # Age Factor (newer repos get a boost)
+    try:
+        created_at = repo_data.get('created_at')
+        if created_at:
+            repo_created_at = datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ')
+            repo_age_years = (datetime.now() - repo_created_at).days / 365.25
+            age_factor = 1 / (1 + repo_age_years)  # Example: 1-year-old repo -> factor of 0.5
+        else:
+            age_factor = 0.5  # Default if created_at is missing
+    except (ValueError, TypeError):
+        age_factor = 0.5  # Default if there's an error parsing the date
+
+    # Combine factors
+    project_impact_score = (
+        originality_weight +
+        (1-originality_weight) * (
+            stars_weight * normalized_stars +
+            forks_weight * normalized_forks +
+            contributors_weight * normalized_contributors
+        )
+    ) * age_factor
+
+    return project_impact_score
+
+# Async version for parallel data fetching
+async def fetch_all_data(username):
+    """Fetch all GitHub data for a user asynchronously."""
+    try:
+        from aiohttp import ClientSession, ClientError
+        import asyncio
+        
+        async def fetch_data(session, url, headers):
+            try:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return {'error': f'Error: {response.status} - {await response.text()}'}
+            except ClientError as e:
+                logger.error(f"Client error for {url}: {str(e)}")
+                return {'error': f'Client error: {str(e)}'}
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout for {url}")
+                return {'error': 'Request timed out'}
+        
+        async def get_pulls_async(session, headers):
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:pr+author:{username}+created:>={since_date}&per_page=100'
+            return await fetch_data(session, url, headers)
+            
+        async def get_issues_async(session, headers):
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:issue+author:{username}+created:>={since_date}&per_page=100'
+            return await fetch_data(session, url, headers)
+            
+        async def get_repos_async(session, headers):
+            url = f'https://api.github.com/users/{username}/repos?per_page=100'
+            return await fetch_data(session, url, headers)
+            
+        async def get_reviews_async(session, headers):
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/issues?q=is:pr+reviewed-by:{username}+created:>={since_date}&per_page=100'
+            return await fetch_data(session, url, headers)
+            
+        async def get_discussions_async(session, headers):
+            since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            url = f'https://api.github.com/search/discussions?q=author:{username}+created:>={since_date}&per_page=100'
+            return await fetch_data(session, url, headers)
+        
+        async def process_repo(session, repo, headers):
+            """Process a single repository to get its commits."""
+            if isinstance(repo, dict) and 'name' in repo:
+                repo_name = repo['name']
+                return await get_repo_commits_async(session, username, repo_name, headers)
+            return None
+        
+        headers = {'Authorization': f'token {os.environ.get("GITHUB_TOKEN")}'}
+        
+        # Configure timeout and other session parameters
+        timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds timeout
+        
+        async with ClientSession(timeout=timeout) as session:
+            # Fetch basic data
+            pulls_task = get_pulls_async(session, headers)
+            issues_task = get_issues_async(session, headers)
+            repos_task = get_repos_async(session, headers)
+            reviews_task = get_reviews_async(session, headers)
+            discussions_task = get_discussions_async(session, headers)
+            
+            pulls_data, issues_data, repos_data, reviews_data, discussions_data = await asyncio.gather(
+                pulls_task, issues_task, repos_task, reviews_task, discussions_task,
+                return_exceptions=True  # Don't let one failure stop everything
+            )
+            
+            # Handle any exceptions from the tasks
+            result = {}
+            
+            if isinstance(pulls_data, Exception):
+                logger.error(f"Error fetching pulls: {str(pulls_data)}")
+                result['pulls'] = {'error': f'Error fetching pulls: {str(pulls_data)}'}
+            else:
+                result['pulls'] = pulls_data
+                
+            if isinstance(issues_data, Exception):
+                logger.error(f"Error fetching issues: {str(issues_data)}")
+                result['issues'] = {'error': f'Error fetching issues: {str(issues_data)}'}
+            else:
+                result['issues'] = issues_data
+                
+            if isinstance(repos_data, Exception):
+                logger.error(f"Error fetching repos: {str(repos_data)}")
+                result['repos'] = {'error': f'Error fetching repos: {str(repos_data)}'}
+            else:
+                result['repos'] = repos_data
+                
+                # Process repositories in parallel if repos data is valid
+                if not isinstance(repos_data, dict) or 'error' not in repos_data:
+                    # Extract repository list from the response
+                    repos_list = repos_data.get('items', []) if isinstance(repos_data, dict) and 'items' in repos_data else repos_data
+                    
+                    if repos_list and isinstance(repos_list, list):
+                        # Process all repositories in parallel
+                        repo_tasks = [process_repo(session, repo, headers) for repo in repos_list]
+                        repo_results = await asyncio.gather(*repo_tasks, return_exceptions=True)
+                        
+                        # Store repository commit data
+                        result['repo_commits'] = []
+                        for repo_result in repo_results:
+                            if isinstance(repo_result, Exception):
+                                logger.error(f"Error processing repo: {str(repo_result)}")
+                            elif repo_result:  # Skip None results
+                                result['repo_commits'].append(repo_result)
+                
+            if isinstance(reviews_data, Exception):
+                logger.error(f"Error fetching reviews: {str(reviews_data)}")
+                result['reviews'] = {'error': f'Error fetching reviews: {str(reviews_data)}'}
+            else:
+                result['reviews'] = reviews_data
+                
+            if isinstance(discussions_data, Exception):
+                logger.error(f"Error fetching discussions: {str(discussions_data)}")
+                result['discussions'] = {'error': f'Error fetching discussions: {str(discussions_data)}'}
+            else:
+                result['discussions'] = discussions_data
+            
+            return result
+            
+    except ImportError:
+        logger.warning("aiohttp not installed, falling back to synchronous fetching")
+        # Fall back to synchronous fetching
+        return {
+            'pulls': get_user_pulls(username),
+            'issues': get_user_issues(username),
+            'repos': get_user_repos(username),
+            'reviews': get_user_reviews(username),
+            'discussions': get_discussions(username)
+        }
+    except Exception as e:
+        logger.error(f"Error in async data fetching: {str(e)}")
+        return {'error': f"Error in async data fetching: {str(e)}"}
