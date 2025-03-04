@@ -9,6 +9,7 @@ import logging
 from functools import lru_cache, wraps
 import json
 import aiohttp
+import asyncio
 import random
 
 # Try to import Redis, but make it optional
