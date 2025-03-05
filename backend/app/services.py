@@ -310,24 +310,78 @@ def calculate_code_quality(commits: list) -> float:
     # Normalize the score
     return min(quality_score / max(len(commits), 1), 100)
 
-def calculate_consistency(contributions: list) -> float:
-    """Calculate contribution consistency over time (active months)."""
-    if not contributions:
+def calculate_consistency(pulls_data, reviews_data):
+    """
+    Calculate a consistency score based on the distribution of activity over time.
+    
+    A higher score indicates more consistent activity rather than bursts.
+    Returns a value between 0 and 1.
+    """
+    # If no data, return 0 consistency
+    if not pulls_data and not reviews_data:
         return 0
-
-    months_active = set()
-    for contrib in contributions:
-        # Handle different date keys for different contribution types
-        date_key = 'created_at' if 'created_at' in contrib else 'submitted_at' if 'submitted_at' in contrib else None
-        if date_key and contrib.get(date_key):
-          try:
-            dt = datetime.strptime(contrib[date_key], '%Y-%m-%dT%H:%M:%SZ')
-            months_active.add((dt.year, dt.month)) # year, month tuple
-          except:
-            # if any error in parsing, move on
-            continue
-
-    return len(months_active) / 24.0  # 24 months in 2 years (maximum)
+        
+    # Collect all activity timestamps
+    timestamps = []
+    
+    # Add PR timestamps
+    for pr in pulls_data:
+        if isinstance(pr, dict):
+            created_at = pr.get('created_at')
+            if created_at:
+                try:
+                    if isinstance(created_at, str):
+                        timestamps.append(datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ'))
+                    elif isinstance(created_at, datetime):
+                        timestamps.append(created_at)
+                except (ValueError, TypeError):
+                    pass  # Skip invalid timestamps
+    
+    # Add review timestamps
+    for review in reviews_data:
+        if isinstance(review, dict):
+            submitted_at = review.get('submitted_at')
+            if submitted_at:
+                try:
+                    if isinstance(submitted_at, str):
+                        timestamps.append(datetime.strptime(submitted_at, '%Y-%m-%dT%H:%M:%SZ'))
+                    elif isinstance(submitted_at, datetime):
+                        timestamps.append(submitted_at)
+                except (ValueError, TypeError):
+                    pass  # Skip invalid timestamps
+    
+    # If no valid timestamps, return 0
+    if not timestamps:
+        return 0
+        
+    # Sort timestamps
+    timestamps.sort()
+    
+    # Calculate time differences between consecutive activities
+    time_diffs = []
+    for i in range(1, len(timestamps)):
+        diff = (timestamps[i] - timestamps[i-1]).total_seconds() / (60 * 60 * 24)  # Convert to days
+        time_diffs.append(diff)
+    
+    # If only one activity, return minimum consistency
+    if not time_diffs:
+        return 0.1  # Some minimal consistency for having at least one activity
+    
+    # Calculate coefficient of variation (lower is more consistent)
+    mean_diff = sum(time_diffs) / len(time_diffs)
+    if mean_diff == 0:
+        return 1.0  # Perfect consistency (all activities at the same time)
+        
+    variance = sum((diff - mean_diff) ** 2 for diff in time_diffs) / len(time_diffs)
+    std_dev = variance ** 0.5
+    cv = std_dev / mean_diff
+    
+    # Convert to a 0-1 score (lower CV means higher consistency)
+    # Cap CV at 3 for normalization purposes
+    capped_cv = min(cv, 3)
+    consistency_score = 1 - (capped_cv / 3)
+    
+    return consistency_score
 
 def normalize_metric(value: float, max_value: float) -> float:
     """Normalizes a metric to a 0-1 range."""
@@ -458,11 +512,31 @@ def aggregate_user_data(username, async_data=None):
     
     # Use async data if provided, otherwise fetch synchronously
     if async_data:
-        pulls_data = async_data.get('pulls', [])
+        # Handle the case where pulls/reviews are returned as search results with 'items' key
+        if 'pulls' in async_data:
+            if isinstance(async_data['pulls'], dict) and 'items' in async_data['pulls']:
+                pulls_data = async_data['pulls'].get('items', [])
+            else:
+                pulls_data = async_data.get('pulls', [])
+        else:
+            pulls_data = []
+            
+        if 'reviews' in async_data:
+            if isinstance(async_data['reviews'], dict) and 'items' in async_data['reviews']:
+                reviews_data = async_data['reviews'].get('items', [])
+            else:
+                reviews_data = async_data.get('reviews', [])
+        else:
+            reviews_data = []
+            
         issues_data = async_data.get('issues', [])
+        if isinstance(issues_data, dict) and 'items' in issues_data:
+            issues_data = issues_data.get('items', [])
+            
         repos_data = async_data.get('repos', [])
-        reviews_data = async_data.get('reviews', [])
         discussions_data = async_data.get('discussions', [])
+        if isinstance(discussions_data, dict) and 'items' in discussions_data:
+            discussions_data = discussions_data.get('items', [])
     else:
         # Fetch data synchronously (slower)
         pulls_data = get_user_pulls(username)
@@ -492,7 +566,16 @@ def aggregate_user_data(username, async_data=None):
         'avg_issue_comments': 0,
         'repos': [],
         'top_languages': {},
-        'impact_score': 0
+        'impact_score': 0,
+        # Add these keys explicitly for the impact score calculation
+        'pull_requests': [],
+        'reviews': [],
+        'repositories': {},
+        'metrics': {
+            'consistency': 0,
+            'avg_pr_size': {'files': 0},
+            'review_comment_rate': 0
+        }
     }
     
     # Process repositories and their commits
@@ -559,7 +642,82 @@ def aggregate_user_data(username, async_data=None):
     
     # Calculate overall metrics that matter for our 5 key metrics
     aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
-    aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
+    
+    # Prepare data for impact score calculation
+    # 1. Transform pulls_data to pull_requests format
+    for pr in pulls_data:
+        if isinstance(pr, dict):
+            # Extract the merged status
+            merged = pr.get('merged', False) or pr.get('state') == 'closed'
+            
+            # Create a simplified PR object with required fields
+            simplified_pr = {
+                'merged': merged,
+                'title': pr.get('title', ''),
+                'number': pr.get('number', 0),
+                'created_at': pr.get('created_at', ''),
+                'closed_at': pr.get('closed_at', '')
+            }
+            
+            # Add to pull_requests list
+            aggregated_data['pull_requests'].append(simplified_pr)
+    
+    # 2. Transform reviews_data to reviews format
+    for review in reviews_data:
+        if isinstance(review, dict):
+            # Create a simplified review object with required fields
+            simplified_review = {
+                'state': review.get('state', 'COMMENTED'),
+                'comment_count': review.get('comment_count', 0) or len(review.get('comments', [])),
+                'submitted_at': review.get('submitted_at', '')
+            }
+            
+            # Add to reviews list
+            aggregated_data['reviews'].append(simplified_review)
+    
+    # 3. Transform repos_data to repositories format
+    for repo in aggregated_data['repos']:
+        if isinstance(repo, dict) and 'name' in repo:
+            # Create a simplified repo object with required fields
+            repo_name = repo.get('name', '')
+            simplified_repo = {
+                'stars': repo.get('stargazers_count', 0) or repo.get('stars', 0),
+                'forks': repo.get('forks_count', 0) or repo.get('forks', 0),
+                'is_fork': repo.get('fork', False)
+            }
+            
+            # Add to repositories dict
+            aggregated_data['repositories'][repo_name] = simplified_repo
+    
+    # 4. Update metrics
+    aggregated_data['metrics']['consistency'] = calculate_consistency(pulls_data, reviews_data)
+    
+    # Calculate average PR size if we have PRs
+    if aggregated_data['pull_requests']:
+        total_files = 0
+        pr_count = 0
+        
+        for pr in pulls_data:
+            if isinstance(pr, dict) and 'files' in pr and isinstance(pr['files'], list):
+                total_files += len(pr['files'])
+                pr_count += 1
+        
+        if pr_count > 0:
+            aggregated_data['metrics']['avg_pr_size'] = {'files': total_files / pr_count}
+    
+    # Calculate review comment rate
+    if aggregated_data['reviews']:
+        total_comments = sum(review.get('comment_count', 0) for review in aggregated_data['reviews'])
+        aggregated_data['metrics']['review_comment_rate'] = total_comments / len(aggregated_data['reviews'])
+    
+    # Now calculate the impact score using the properly formatted data
+    try:
+        aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
+    except ValueError as e:
+        # If there's an error calculating the impact score, log it but don't fail
+        logger.error(f"Error calculating impact score: {str(e)}")
+        # Don't set a default score - let the caller handle the error
+        raise ValueError(str(e))
     
     logging.info(f"Aggregation completed in {time.time() - start_time:.2f} seconds")
     return aggregated_data
@@ -1479,6 +1637,10 @@ def calculate_impact_score_graphql(data):
     try:
         metrics = {}
         
+        # Check if we have sufficient data to calculate a meaningful score
+        if not data.get('pull_requests') and not data.get('reviews') and not data.get('repositories'):
+            raise ValueError("Insufficient GitHub data to calculate impact score. No pull requests, reviews, or repositories found.")
+        
         # 1. Merged PRs to active repos (32%)
         pull_requests = data.get('pull_requests', [])
         merged_prs = sum(1 for pr in pull_requests if pr.get('merged', False))
@@ -1515,7 +1677,12 @@ def calculate_impact_score_graphql(data):
             avg_files = avg_pr_size.get('files', 0)
             size_score = max(0, 1 - (avg_files / 20))  # Cap at 20 files
         else:
-            size_score = 0.5  # Default if no data
+            # Don't use a default value - if there's no PR size data, we can't calculate this metric
+            if not pull_requests:
+                size_score = 0  # No PRs means no size score
+            else:
+                # We have PRs but no size data - this is unexpected
+                raise ValueError("PR size data missing but PRs exist")
         
         maintenance_score = (0.6 * consistency) + (0.4 * size_score)
         metrics['maintenance'] = maintenance_score * 19  # 19% weight
@@ -1567,8 +1734,12 @@ def calculate_impact_score(aggregated_data: dict) -> float:
     """
     # Simply call the GraphQL version now to ensure consistent scoring
     result = calculate_impact_score_graphql(aggregated_data)
-    if isinstance(result, dict) and 'total' in result:
-        return result['total']
+    if isinstance(result, dict):
+        if 'error' in result:
+            # If there's an error, raise it to be handled by the caller
+            raise ValueError(result['error'])
+        elif 'total' in result:
+            return result['total']
     return 0  # Default to 0 if there's an error
 
 # Add this function after the other get_user_* functions
@@ -1715,12 +1886,18 @@ async def fetch_all_data(username):
         timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds timeout
         
         async with ClientSession(timeout=timeout) as session:
+            logger.info(f"Prashob: Fetching Github Data")
             # Fetch basic data
             pulls_task = get_pulls_async(session, headers)
+            logger.info(f"Prashob: Pulls_task: {pulls_task}")
             issues_task = get_issues_async(session, headers)
+            logger.info(f"Prashob: Issues_task: {issues_task}")
             repos_task = get_repos_async(session, headers)
+            logger.info(f"Prashob: Repos_task: {repos_task}")
             reviews_task = get_reviews_async(session, headers)
+            logger.info(f"Prashob: Reviews_task: {reviews_task}")
             discussions_task = get_discussions_async(session, headers)
+            logger.info(f"Prashob: Discussions_task: {discussions_task}")
             
             pulls_data, issues_data, repos_data, reviews_data, discussions_data = await asyncio.gather(
                 pulls_task, issues_task, repos_task, reviews_task, discussions_task,
