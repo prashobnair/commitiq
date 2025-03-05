@@ -1,8 +1,13 @@
 # backend/run.py
 from app import create_app  # Import from app, not app.api
+import os
 # import asyncio
 # from hypercorn.config import Config
 # from hypercorn.asyncio import serve
+
+# Set development environment variables
+os.environ['FLASK_ENV'] = 'development'
+os.environ['DISABLE_CACHE'] = 'true'
 
 app = create_app()
 
