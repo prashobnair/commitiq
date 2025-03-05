@@ -622,11 +622,7 @@ def get_repo_commits(username, repo_name):
 def aggregate_user_data(username, async_data=None):
     """Aggregate GitHub user data including repositories, commits, issues, and pull requests.
     
-    This function has been updated to use GraphQL by default, and only falls back to
-    REST API data when necessary. GraphQL provides more efficient data fetching.
-    
-    NOTE: The REST API fallback path is deprecated and will be removed in a future version.
-    All new code should use the GraphQL API directly through aggregate_user_data_graphql.
+    This function uses GraphQL for efficient data fetching.
     
     Args:
         username (str): GitHub username
@@ -636,224 +632,20 @@ def aggregate_user_data(username, async_data=None):
         dict: Aggregated user data with metrics
     """
     try:
-        # First, try to use GraphQL as the primary data source
+        # Use GraphQL as the primary data source
         if async_data and 'graphql_data' in async_data:
             # If we have GraphQL data from async fetching, use it directly
             graphql_result = {'data': async_data['graphql_data']}
             return aggregate_user_data_graphql(username, graphql_result)
         else:
-            # Try to get data from GraphQL
+            # Get data from GraphQL
             graphql_data = get_user_contributions_graphql(username)
             
             # If successful, use GraphQL data
             if not (isinstance(graphql_data, dict) and 'error' in graphql_data):
                 return aggregate_user_data_graphql(username, {'data': graphql_data})
-        
-        # If GraphQL fails or is not available, fall back to REST API data
-        logger.warning(f"Falling back to deprecated REST API data for {username}. This fallback will be removed in a future version.")
-        
-        # --- Original REST API processing code below ---
-        
-        # Get data from async_data if provided, or fetch directly
-        if async_data:
-            logger.info(f"Using async data for {username}")
-            pulls_data = async_data.get('pulls', [])
-            issues_data = async_data.get('issues', [])
-            repos_data = async_data.get('repos', [])
-            reviews_data = async_data.get('reviews', [])
-            discussions_data = async_data.get('discussions', [])
-            logger.info(f"Completed function")
-        else:
-            # Fetch data synchronously (slower)
-            pulls_data = get_user_pulls(username)
-            issues_data = get_user_issues(username)
-            repos_data = get_user_repos(username)
-            reviews_data = get_user_reviews(username)
-            discussions_data = get_discussions(username)
-        
-        # Process the data to ensure it's in the right format
-        if isinstance(pulls_data, dict) and 'items' in pulls_data:
-            pulls_data = pulls_data.get('items', [])
-        
-        if isinstance(issues_data, dict) and 'items' in issues_data:
-            issues_data = issues_data.get('items', [])
-            
-        if isinstance(reviews_data, dict) and 'items' in reviews_data:
-            reviews_data = reviews_data.get('items', [])
-            
-        if isinstance(discussions_data, dict) and 'items' in discussions_data:
-            discussions_data = discussions_data.get('items', [])
-        
-        # Initialize result structure
-        aggregated_data = {
-            'username': username,
-            'total_contributions': 0,
-            'total_commits': 0,
-            'total_prs': 0,
-            'merged_prs': 0,
-            'total_issues': 0,
-            'total_reviews': 0,
-            'total_approved_reviews': 0,
-            'total_review_comments': 0,
-            'total_comments': 0,
-            'code_quality': 0,
-            'code_survival_rate': 0,
-            'file_impact': 0,
-            'consistency': 0,
-            'project_impact': 0,
-            'avg_pr_size': 0,
-            'avg_issue_comments': 0,
-            'repos': [],
-            'top_languages': {},
-            'impact_score': 0,
-            # Add these keys explicitly for the impact score calculation
-            'pull_requests': [],
-            'reviews': [],
-            'repositories': {},
-            'metrics': {
-                'consistency': 0,
-                'avg_pr_size': {'files': 0},
-                'review_comment_rate': 0
-            }
-        }
-        
-        # Process repositories and their commits
-        all_commits = []
-        for repo_data in repos_data:
-            if isinstance(repo_data, dict) and 'error' in repo_data:
-                continue  # Skip error repos
-                
-            repo_owner = repo_data.get('owner', {}).get('login', username)
-            repo_name = repo_data.get('name', '')
-            
-            if not repo_name:
-                continue
-                
-            # Get repository commits
-            try:
-                commits_data = get_repo_commits(username, repo_name)
-            except Exception as e:
-                logger.error(f"Error fetching commits for {repo_name}: {str(e)}")
-                commits_data = {'error': str(e)}
-                
-            if isinstance(commits_data, dict) and 'error' in commits_data:
-                # Log error but continue with next repo
-                logger.warning(f"Error fetching commits for {repo_name}: {commits_data['error']}")
-                repo_data['commits'] = []
             else:
-                repo_data['commits'] = commits_data
-                
-                # Add to total commit count
-                if commits_data and isinstance(commits_data, list):
-                    aggregated_data['total_commits'] += len(commits_data)
-                    all_commits.extend(commits_data)
-                
-                # Get contributor count for this repo
-                try:
-                    contributors_url = repo_data.get('contributors_url', '')
-                    if contributors_url:
-                        api = GitHubAPI()
-                        contributors_response = api.make_request(contributors_url)
-                        if contributors_response.status_code == 200:
-                            contributors = contributors_response.json()
-                            repo_data['num_contributors'] = len(contributors)
-                        else:
-                            repo_data['num_contributors'] = 1  # Default if can't fetch
-                    else:
-                        repo_data['num_contributors'] = 1  # Default
-                except Exception as e:
-                    logger.error(f"Error fetching contributors for {repo_name}: {str(e)}")
-                    repo_data['num_contributors'] = 1  # Default
-                    
-                # Calculate code quality and survival for this repo
-                if commits_data and isinstance(commits_data, list) and len(commits_data) > 0:
-                    repo_data['code_quality'] = calculate_code_quality(commits_data)
-                    repo_data['code_survival'] = calculate_code_survival(commits_data)
-                    # Calculate test coverage
-                    repo_data['test_coverage'] = calculate_test_coverage(commits_data)
-                    
-                # Add repo to aggregated data
-                aggregated_data['repos'].append(repo_data)
-        
-        # Calculate overall metrics that matter for our 5 key metrics
-        aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
-        
-        # Prepare data for impact score calculation
-        # 1. Transform pulls_data to pull_requests format
-        for pr in pulls_data:
-            if isinstance(pr, dict):
-                # Extract the merged status
-                merged = pr.get('merged', False) or pr.get('state') == 'closed'
-                
-                # Create a simplified PR object with required fields
-                simplified_pr = {
-                    'merged': merged,
-                    'title': pr.get('title', ''),
-                    'number': pr.get('number', 0),
-                    'created_at': pr.get('created_at', ''),
-                    'closed_at': pr.get('closed_at', '')
-                }
-                
-                # Add to pull_requests list
-                aggregated_data['pull_requests'].append(simplified_pr)
-        
-        # 2. Transform reviews_data to reviews format
-        for review in reviews_data:
-            if isinstance(review, dict):
-                # Create a simplified review object with required fields
-                simplified_review = {
-                    'state': review.get('state', 'COMMENTED'),
-                    'comment_count': review.get('comment_count', 0) or len(review.get('comments', [])),
-                    'submitted_at': review.get('submitted_at', '')
-                }
-                
-                # Add to reviews list
-                aggregated_data['reviews'].append(simplified_review)
-        
-        # 3. Transform repos_data to repositories format
-        for repo in aggregated_data['repos']:
-            if isinstance(repo, dict) and 'name' in repo:
-                # Create a simplified repo object with required fields
-                repo_name = repo.get('name', '')
-                simplified_repo = {
-                    'stars': repo.get('stargazers_count', 0) or repo.get('stars', 0),
-                    'forks': repo.get('forks_count', 0) or repo.get('forks', 0),
-                    'is_fork': repo.get('fork', False)
-                }
-                
-                # Add to repositories dict
-                aggregated_data['repositories'][repo_name] = simplified_repo
-        
-        # 4. Update metrics
-        aggregated_data['metrics']['consistency'] = calculate_consistency(pulls_data, reviews_data)
-        
-        # Calculate average PR size if we have PRs
-        if aggregated_data['pull_requests']:
-            total_files = 0
-            pr_count = 0
-            
-            for pr in pulls_data:
-                if isinstance(pr, dict) and 'files' in pr and isinstance(pr['files'], list):
-                    total_files += len(pr['files'])
-                    pr_count += 1
-            
-            if pr_count > 0:
-                aggregated_data['metrics']['avg_pr_size'] = {'files': total_files / pr_count}
-        
-        # Calculate review comment rate
-        if aggregated_data['reviews']:
-            total_comments = sum(review.get('comment_count', 0) for review in aggregated_data['reviews'])
-            aggregated_data['metrics']['review_comment_rate'] = total_comments / len(aggregated_data['reviews'])
-        
-        # Now calculate the impact score using the properly formatted data
-        try:
-            aggregated_data['impact_score'] = calculate_impact_score(aggregated_data)
-        except ValueError as e:
-            # If there's an error calculating the impact score, log it but don't fail
-            logger.error(f"Error calculating impact score: {str(e)}")
-            aggregated_data['impact_score'] = 0
-        
-        return aggregated_data
+                return graphql_data  # Return the error from GraphQL
     except Exception as e:
         logger.error(f"Error in aggregate_user_data: {str(e)}")
         return {'error': f"Error aggregating user data: {str(e)}"}
@@ -907,285 +699,6 @@ def calculate_test_coverage(commits: list) -> float:
     # Combine metrics (weighted average)
     return (0.4 * test_commit_ratio + 0.6 * test_file_ratio) * 100  # Convert to percentage
 
-# --- Security Metrics ---
-def get_security_advisories(username: str) -> list:
-    """Fetch security-related contributions"""
-    logger.warning("get_security_advisories is deprecated - use GraphQL data instead")
-    url_template = (
-        'https://api.github.com/search/issues?'
-        'q=author:{username}+label:security+created:>={date}&per_page=100'
-    )
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "security_advisories", date=since_date)
-
-def calculate_security_impact(commits: list, advisories: list) -> float:
-    """Calculate security consciousness based on security-related commits and advisories"""
-    if not commits:
-        return 0.0
-    
-    # Extract security-related patterns from commit messages and file paths
-    security_keywords = [
-        'security', 'vulnerability', 'exploit', 'cve', 'patch',
-        'auth', 'permission', 'access control', 'encrypt', 'decrypt',
-        'sanitize', 'validate', 'xss', 'csrf', 'injection', 'malicious'
-    ]
-    
-    # Count security-related commits
-    security_commits = 0
-    for commit in commits:
-        msg = commit.get('commit', {}).get('message', '').lower()
-        
-        # Check if any security keyword is in the commit message
-        if any(keyword in msg for keyword in security_keywords):
-            security_commits += 1
-            continue
-            
-        # Check modified files for security implications
-        for file in commit.get('files', []):
-            filename = file.get('filename', '').lower()
-            
-            # Check if the file path contains security-related terms
-            if any(keyword in filename for keyword in security_keywords):
-                security_commits += 1
-                break
-        
-    # Calculate base score from commits
-    security_commit_ratio = security_commits / len(commits)
-    
-    # Boost score if user has security advisories
-    advisory_boost = min(len(advisories) * 0.05, 0.25)  # Cap the boost at 0.25
-    
-    # Combine for final score (0-1 range)
-    return normalize_metric(security_commit_ratio + advisory_boost, 1.0)
-
-# --- Release Impact Metrics ---
-def get_release_impact(repo_owner: str, repo_name: str) -> dict:
-    """
-    DEPRECATED: Use GraphQL API instead. This function will be removed in a future version.
-    
-    Analyzes the impact of releases for a repository.
-    Returns information about releases and their activity metrics.
-    """
-    logger.warning(f"get_release_impact() is deprecated. Use GraphQL API instead.")
-    
-    github_api = GitHubAPI()
-    releases_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases?per_page=100"
-    
-    try:
-        response = github_api.make_request(releases_url)
-        
-        if response.status_code != 200:
-            return {
-                "release_count": 0,
-                "has_releases": False,
-                "release_frequency": 0,
-                "avg_comments": 0,
-                "avg_reactions": 0
-            }
-        
-        releases = response.json()
-        
-        if not releases:
-            return {
-                "release_count": 0,
-                "has_releases": False,
-                "release_frequency": 0,
-                "avg_comments": 0,
-                "avg_reactions": 0
-            }
-        
-        # Calculate total releases
-        total_releases = len(releases)
-        
-        # Calculate release frequency (releases per year)
-        if total_releases >= 2:
-            first_release = datetime.strptime(releases[-1]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
-            latest_release = datetime.strptime(releases[0]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
-            time_span_years = (latest_release - first_release).days / 365.25
-            release_frequency = total_releases / max(time_span_years, 0.1)  # Avoid division by zero
-        else:
-            release_frequency = 0
-        
-        # Calculate latest release age in days
-        latest_release_date = datetime.strptime(releases[0]['created_at'], '%Y-%m-%dT%H:%M:%SZ')
-        latest_release_age = (datetime.now() - latest_release_date).days
-        
-        # Calculate total downloads if available
-        total_downloads = 0
-        for release in releases:
-            for asset in release.get('assets', []):
-                total_downloads += asset.get('download_count', 0)
-        
-        return {
-            "release_count": total_releases,
-            "release_frequency": release_frequency,
-            "latest_release_age": latest_release_age,
-            "total_downloads": total_downloads,
-            "avg_comments": 0,
-            "avg_reactions": 0
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching release data: {str(e)}")
-        return {
-            "release_count": 0,
-            "has_releases": False,
-            "release_frequency": 0,
-            "avg_comments": 0,
-            "avg_reactions": 0
-        }
-
-# --- Community Engagement Metrics ---
-def get_discussions(username: str) -> list:
-    """Fetch GitHub discussions created by the user
-    
-    DEPRECATED: Use GraphQL data from get_user_contributions_graphql instead.
-    This function is kept for backward compatibility and as a fallback.
-    The GraphQL query already fetches discussion data through repositoryDiscussions.
-    """
-    logger.warning("get_discussions is deprecated - use GraphQL data instead")
-    url_template = 'https://api.github.com/search/discussions?q=author:{username}+created:>={date}&per_page=100'
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "discussions", date=since_date)
-
-def analyze_discussion_quality(discussions: list) -> dict:
-    """Analyze discussion engagement quality"""
-    if not discussions:
-        return {
-            'total': 0,
-            'engagement_score': 0
-        }
-    
-    # Words indicating positive engagement
-    positive_words = {
-        'thanks', 'thank', 'helpful', 'great', 'good', 'excellent', 
-        'awesome', 'appreciate', 'useful', 'solved', 'solution', 
-        'works', 'working', 'fixed', 'resolved'
-    }
-    
-    # Words indicating negative engagement
-    negative_words = {
-        'issue', 'problem', 'bug', 'error', 'fail', 'failed', 
-        'broken', 'doesn\'t work', 'not working', 'incorrect'
-    }
-    
-    # Initialize stats
-    stats = {
-        'total': len(discussions),
-        'positive_count': 0,
-        'negative_count': 0,
-        'solutions_count': 0,
-        'accepted_answers': 0,
-        'engagement_score': 0
-    }
-    
-    # Analyze each discussion
-    for discussion in discussions:
-        body = discussion.get('body', '').lower() if discussion.get('body') else ''
-        title = discussion.get('title', '').lower() if discussion.get('title') else ''
-        combined_text = f"{title} {body}"
-        
-        # Count positive and negative words
-        positive_count = sum(1 for word in positive_words if word in combined_text)
-        negative_count = sum(1 for word in negative_words if word in combined_text)
-        
-        stats['positive_count'] += positive_count
-        stats['negative_count'] += negative_count
-        
-        # Check for solutions
-        if 'solution' in combined_text or 'answer' in combined_text or 'solved' in combined_text:
-            stats['solutions_count'] += 1
-        
-        # Check for accepted answers
-        if discussion.get('state') == 'closed' or discussion.get('answer_chosen_at'):
-            stats['accepted_answers'] += 1
-    
-    # Calculate engagement score
-    positive_ratio = stats['positive_count'] / stats['total'] if stats['total'] > 0 else 0
-    solution_ratio = stats['solutions_count'] / stats['total'] if stats['total'] > 0 else 0
-    accepted_ratio = stats['accepted_answers'] / stats['total'] if stats['total'] > 0 else 0
-    
-    # Weighted engagement score (0-100)
-    stats['engagement_score'] = (
-        0.4 * positive_ratio + 
-        0.3 * solution_ratio + 
-        0.3 * accepted_ratio
-    ) * 100
-    
-    return stats
-
-async def get_repo_commits_async(session, username, repo_name, headers):
-    """Fetch commits for a specific repository asynchronously."""
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    url = f'https://api.github.com/repos/{username}/{repo_name}/commits?author={username}&since={since_date}&per_page=100'
-    
-    all_commits = []
-    retries = 3
-    retry_delay = 2  # Start with 2 seconds delay
-    
-    try:
-        while True:
-            try:
-                async with session.get(url, headers=headers, timeout=30) as response:
-                    # Handle rate limiting
-                    if response.status == 403 and 'X-RateLimit-Remaining' in response.headers:
-                        remaining = int(response.headers.get('X-RateLimit-Remaining', '0'))
-                        if remaining == 0:
-                            reset_time = int(response.headers.get('X-RateLimit-Reset', '0'))
-                            wait_time = max(reset_time - time.time(), 10)
-                            logger.warning(f"Rate limit exceeded in async request. Waiting for {wait_time} seconds")
-                            await asyncio.sleep(wait_time)
-                            continue  # Retry the request
-                    
-                    if response.status == 200:
-                        commits_data = await response.json()
-                        all_commits.extend(commits_data)
-                        
-                        # Check for pagination
-                        link_header = response.headers.get('Link', '')
-                        if 'rel="next"' in link_header:
-                            # Extract next URL from Link header
-                            next_url = None
-                            for link in link_header.split(','):
-                                if 'rel="next"' in link:
-                                    next_url = link.split(';')[0].strip('<>')
-                                    break
-                            if next_url:
-                                url = next_url
-                            else:
-                                break
-                        else:
-                            break
-                    elif response.status == 409:
-                        logger.debug(f"Empty repository detected for {repo_name} (409 Conflict)")
-                        return {'repo_name': repo_name, 'commits': []}
-                    elif response.status == 404:
-                        logger.debug(f"Repository not found: {repo_name}")
-                        return {'repo_name': repo_name, 'commits': []}
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Error fetching commits for {repo_name}: Status {response.status} - {error_text}")
-                        
-                        if retries > 0 and 500 <= response.status < 600:  # Only retry for server errors
-                            retries -= 1
-                            await asyncio.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                            continue
-                        
-                        return {'repo_name': repo_name, 'error': f'Commit fetch failed: {response.status}'}
-            except asyncio.TimeoutError:
-                if retries > 0:
-                    retries -= 1
-                    await asyncio.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    logger.warning(f"Timeout fetching commits for {repo_name}. Retrying... ({retries} retries left)")
-                    continue
-                return {'repo_name': repo_name, 'error': 'Request timed out'}
-        
-        return {'repo_name': repo_name, 'commits': all_commits}
-    except Exception as e:
-        logger.error(f"Error in get_repo_commits_async for {repo_name}: {str(e)}")
-        return {'repo_name': repo_name, 'error': str(e)}
 
 class GitHubGraphQL:
     """GraphQL client for GitHub API - much more efficient than REST for bulk data"""
@@ -1337,7 +850,6 @@ def get_user_contributions_graphql(username, time_window_days=365):
     - Pull request contributions
     - Issue contributions
     - Code review contributions
-    - Discussion contributions
     
     Returns a comprehensive structure with all the data.
     """
@@ -1487,39 +999,6 @@ def get_user_contributions_graphql(username, time_window_days=365):
                 isDraft
               }
             }
-            # Added security data
-            vulnerabilityAlerts(first: 10) {
-              totalCount
-              nodes {
-                createdAt
-                dismissedAt
-                vulnerableManifestPath
-                securityVulnerability {
-                  severity
-                  package {
-                    name
-                  }
-                }
-              }
-            }
-          }
-        }
-        # Added discussions data
-        repositoryDiscussions(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
-          totalCount
-          nodes {
-            title
-            createdAt
-            repository {
-              name
-            }
-            comments {
-              totalCount
-            }
-            upvoteCount
-            category {
-              name
-            }
           }
         }
       }
@@ -1594,8 +1073,7 @@ def aggregate_user_data_graphql(username, graphql_data=None):
                 'commits': 0,
                 'pulls': 0,
                 'issues': 0,
-                'reviews': 0,
-                'discussions': 0  # Added discussions count
+                'reviews': 0
             }
         }
         
@@ -1707,18 +1185,6 @@ def aggregate_user_data_graphql(username, graphql_data=None):
                 result['repositories'][repo_name]['releases'] = {
                     'count': release_count,
                     'releases': release_nodes
-                }
-                
-            # Process security data
-            security = repo.get('vulnerabilityAlerts', {})
-            if security:
-                alert_count = security.get('totalCount', 0)
-                alert_nodes = security.get('nodes', [])
-                
-                # Store security data
-                result['repositories'][repo_name]['security'] = {
-                    'alert_count': alert_count,
-                    'alerts': alert_nodes
                 }
         
         # Extract pull request data
@@ -1853,47 +1319,6 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         total_issue_comments = sum(i.get('comment_count', 0) for i in issues)
         result['metrics']['avg_issue_comments'] = total_issue_comments / len(issues) if issues else 0
         
-        # Extract discussion data
-        discussions = []
-        discussion_data = user_data.get('repositoryDiscussions', {}) if user_data is not None else {}
-        discussion_nodes = discussion_data.get('nodes', []) if discussion_data is not None else []
-        
-        for discussion in discussion_nodes:
-            if discussion is None:
-                continue
-                
-            comments = discussion.get('comments', {})
-            comment_count = comments.get('totalCount', 0) if comments is not None else 0
-            
-            discussion_info = {
-                'title': discussion.get('title', ''),
-                'created_at': discussion.get('createdAt'),
-                'repository': discussion.get('repository', {}).get('name', '') if discussion.get('repository') is not None else '',
-                'comment_count': comment_count,
-                'upvote_count': discussion.get('upvoteCount', 0),
-                'category': discussion.get('category', {}).get('name', '') if discussion.get('category') is not None else ''
-            }
-            discussions.append(discussion_info)
-        
-        result['discussions'] = discussions
-        
-        # Update activity count for discussions
-        result['activity']['discussions'] = len(discussions)
-        
-        # Calculate discussion engagement metrics
-        if discussions:
-            avg_comments = sum(d.get('comment_count', 0) for d in discussions) / len(discussions)
-            avg_upvotes = sum(d.get('upvote_count', 0) for d in discussions) / len(discussions)
-            result['metrics']['discussion_engagement'] = {
-                'avg_comments': avg_comments,
-                'avg_upvotes': avg_upvotes
-            }
-        else:
-            result['metrics']['discussion_engagement'] = {
-                'avg_comments': 0,
-                'avg_upvotes': 0
-            }
-        
         # Calculate repository metrics
         repo_count = len(result['repositories'])
         if repo_count > 0:
@@ -1963,43 +1388,6 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         else:
             result['metrics']['avg_days_between_releases'] = 90  # Default value
         
-        # Calculate security metrics
-        security_alerts = 0
-        response_times = []
-        
-        for repo_data in result['repositories'].values():
-            security = repo_data.get('security', {})
-            if security:
-                alerts = security.get('alerts', [])
-                security_alerts += len(alerts)
-                
-                # Calculate response times
-                for alert in alerts:
-                    if alert is None:
-                        continue
-                        
-                    try:
-                        created = datetime.fromisoformat(alert.get('createdAt', '').replace('Z', '+00:00'))
-                        dismissed = datetime.fromisoformat(alert.get('dismissedAt', '').replace('Z', '+00:00')) if alert.get('dismissedAt') else None
-                        
-                        if dismissed:
-                            response_time = (dismissed - created).days
-                            if response_time >= 0:
-                                response_times.append(response_time)
-                    except (ValueError, TypeError):
-                        continue
-        
-        # Store security metrics
-        if security_alerts > 0:
-            result['metrics']['security_response_rate'] = len(response_times) / security_alerts
-        else:
-            result['metrics']['security_response_rate'] = 1.0  # Default to perfect if no alerts
-            
-        if response_times:
-            result['metrics']['avg_security_response_time_days'] = sum(response_times) / len(response_times)
-        else:
-            result['metrics']['avg_security_response_time_days'] = 0  # Default to 0 if no response times
-        
         # Calculate overall impact score
         result['impact_score'] = calculate_impact_score_graphql(result)
         
@@ -2021,13 +1409,11 @@ def calculate_impact_score_graphql(data):
         # Determine if the dataset is large enough to benefit from parallelization
         repos = data.get('repositories', {})
         pull_requests = data.get('pull_requests', [])
-        discussions = data.get('discussions', [])
         reviews = data.get('reviews', [])
         
         is_large_dataset = (
             len(repos) > 10 or 
             len(pull_requests) > 50 or 
-            len(discussions) > 20 or 
             len(reviews) > 50
         )
         
@@ -2080,13 +1466,10 @@ def calculate_impact_score_graphql(data):
             
         # 5. Community Score
         community = 0
-        if 'discussion_engagement' in metrics:
-            community += normalize_metric(metrics.get('discussion_engagement', {}).get('avg_comments', 0), 10) * 0.4
-            community += normalize_metric(metrics.get('discussion_engagement', {}).get('avg_upvotes', 0), 5) * 0.4
         
         # Add in followers contribution
         followers = data.get('followers', 0)
-        community += normalize_metric(followers, 1000) * 0.2
+        community += normalize_metric(followers, 1000) * 1.0
         
         # 6. Release Management
         release_score = 0
@@ -2102,12 +1485,8 @@ def calculate_impact_score_graphql(data):
         
         # 7. Security Score
         security_score = 0
-        if 'security_response_rate' in metrics:
-            security_score += metrics.get('security_response_rate', 0) * 0.7
-        if 'avg_security_response_time_days' in metrics:
-            # Lower is better
-            avg_days = metrics.get('avg_security_response_time_days', 30)
-            security_score += (1 - normalize_metric(min(avg_days, 30), 30)) * 0.3
+        # Default to a moderate security score since we removed the security advisories functionality
+        security_score = 0.5
             
         # Calculate the overall impact score (weighted average)
         impact_score = (
@@ -2130,12 +1509,21 @@ def _calculate_impact_score_parallel(data):
     """Calculate impact score using parallel processing for large datasets"""
     try:
         from concurrent.futures import ThreadPoolExecutor
-        import functools
         
-        # Extract metrics once (shared across threads)
+        # Extract key metrics from the data
         metrics = data.get('metrics', {})
         
-        # Define individual scoring functions
+        # Weight factors for different metrics
+        weights = {
+            'repo_impact': 0.20,      # Impact of repositories (stars, forks)
+            'code_quality': 0.15,     # Code quality metrics
+            'consistency': 0.15,      # Consistency of contributions
+            'collaboration': 0.20,    # Collaboration metrics (PRs, reviews)
+            'community': 0.15,        # Community engagement 
+            'releases': 0.10,         # Release management
+            'security': 0.05          # Security consciousness
+        }
+        
         def calc_repo_impact(metrics):
             repo_impact = 0
             if 'avg_repo_stars' in metrics:
@@ -2165,10 +1553,7 @@ def _calculate_impact_score_parallel(data):
         
         def calc_community(metrics, followers):
             community = 0
-            if 'discussion_engagement' in metrics:
-                community += normalize_metric(metrics.get('discussion_engagement', {}).get('avg_comments', 0), 10) * 0.4
-                community += normalize_metric(metrics.get('discussion_engagement', {}).get('avg_upvotes', 0), 5) * 0.4
-            community += normalize_metric(followers, 1000) * 0.2
+            community += normalize_metric(followers, 1000) * 1.0
             return community
         
         def calc_release_score(metrics):
@@ -2185,12 +1570,8 @@ def _calculate_impact_score_parallel(data):
         
         def calc_security_score(metrics):
             security_score = 0
-            if 'security_response_rate' in metrics:
-                security_score += metrics.get('security_response_rate', 0) * 0.7
-            if 'avg_security_response_time_days' in metrics:
-                avg_days = metrics.get('avg_security_response_time_days', 30)
-                security_score += (1 - normalize_metric(min(avg_days, 30), 30)) * 0.3
-            return security_score
+            # Default to a moderate security score since we removed the security advisories functionality
+            return 0.5
         
         # Define tasks to run in parallel
         tasks = [
@@ -2203,39 +1584,17 @@ def _calculate_impact_score_parallel(data):
             (calc_security_score, (metrics,))
         ]
         
-        # Weight factors for different metrics
-        weights = {
-            'repo_impact': 0.20,      # Impact of repositories (stars, forks)
-            'code_quality': 0.15,     # Code quality metrics
-            'consistency': 0.15,      # Consistency of contributions
-            'collaboration': 0.20,    # Collaboration metrics (PRs, reviews)
-            'community': 0.15,        # Community engagement 
-            'releases': 0.10,         # Release management
-            'security': 0.05          # Security consciousness
-        }
-        
-        # Create weighted tasks
-        weighted_tasks = [
-            (func, args, weight) 
-            for (func, args), weight in zip(
-                tasks, 
-                [weights['repo_impact'], weights['code_quality'], weights['consistency'],
-                 weights['collaboration'], weights['community'], weights['releases'], 
-                 weights['security']]
-            )
-        ]
-        
         # Execute tasks in parallel
         with ThreadPoolExecutor(max_workers=min(7, os.cpu_count() or 4)) as executor:
             futures = [
                 executor.submit(func, *args) 
-                for func, args, _ in weighted_tasks
+                for func, args in tasks
             ]
             
             # Collect results and apply weights
             result = sum(
                 future.result() * weight 
-                for future, (_, _, weight) in zip(futures, weighted_tasks)
+                for future, weight in zip(futures, weights)
             )
         
         # Scale to 0-100 range
@@ -2353,58 +1712,10 @@ def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
 
 # Async version for parallel data fetching
 async def fetch_all_data(username):
-    """Fetch all GitHub data for a user asynchronously using GraphQL.
-    
-    This function uses a single GraphQL query to fetch all the data needed for the impact score calculation,
-    which is much more efficient than multiple REST API calls. The GraphQL query includes:
-    
-    - Repository data (stars, forks, languages)
-    - Pull request data (merged, size, etc.)
-    - Code review data (comments, approvals)
-    - Issue data
-    - Discussion data
-    - Release data
-    - Security vulnerability data
-    
-    The final scoring mechanism prioritizes:
-    - Merged PRs to active repos (32% weight)
-    - Code review depth (28% weight)
-    - Maintenance burden (19% weight)
-    - Project popularity (15% weight)
-    - Documentation (6% weight)
-    
-    Args:
-        username (str): GitHub username
-        
-    Returns:
-        dict: All GitHub data for the user
-    """
+    """Fetch all GitHub data for a user asynchronously using GraphQL."""
     try:
-        from aiohttp import ClientSession, ClientError
-        import asyncio
-        
-        async def fetch_graphql_data(session, query, variables, headers):
-            """Execute a GraphQL query asynchronously"""
-            try:
-                async with session.post(
-                    'https://api.github.com/graphql',
-                    json={'query': query, 'variables': variables},
-                    headers=headers,
-                    timeout=60  # Longer timeout for the large GraphQL query
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    return {'error': f'GraphQL Error: {response.status} - {await response.text()}'}
-            except ClientError as e:
-                logger.error(f"GraphQL client error: {str(e)}")
-                return {'error': f'GraphQL client error: {str(e)}'}
-            except asyncio.TimeoutError:
-                logger.error(f"GraphQL request timed out")
-                return {'error': 'GraphQL request timed out'}
-        
-        # Use an existing token
-        token = os.environ.get("GITHUB_TOKEN", "")
-        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        # Check if aiohttp is available
+        import aiohttp
         
         # Calculate the date for the time window
         since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -2549,125 +1860,99 @@ async def fetch_all_data(username):
                     isDraft
                   }
                 }
-                vulnerabilityAlerts(first: 10) {
-                  totalCount
-                  nodes {
-                    createdAt
-                    dismissedAt
-                    vulnerableManifestPath
-                    securityVulnerability {
-                      severity
-                      package {
-                        name
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            repositoryDiscussions(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
-              totalCount
-              nodes {
-                title
-                createdAt
-                repository {
-                  name
-                }
-                comments {
-                  totalCount
-                }
-                upvoteCount
-                category {
-                  name
-                }
               }
             }
           }
         }
         """
         
+        # Use an existing token
+        token = os.environ.get("GITHUB_TOKEN", "")
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        
         # Configure timeout and other session parameters
         timeout = aiohttp.ClientTimeout(total=90)  # Longer timeout for the large GraphQL query
         
-        async with ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             # Use only one GraphQL call instead of multiple REST calls
             variables = {
                 "login": username,
                 "since": since_date
             }
             
-            graphql_result = await fetch_graphql_data(session, query, variables, headers)
-            
-            # Check for errors
-            if isinstance(graphql_result, dict) and 'errors' in graphql_result:
-                logger.error(f"GraphQL error for {username}: {graphql_result['errors']}")
-                return {'error': f"GraphQL error: {graphql_result['errors']}"}
-                
-            # Process the result
-            if 'data' in graphql_result:
-                # Store the raw GraphQL data for processing by aggregate_user_data_graphql
-                result = {
-                    'graphql_data': graphql_result['data']
-                }
-                
-                # Also extract the basic data for compatibility with existing code
-                user_data = graphql_result['data'].get('user', {})
-                if not user_data:
-                    return {'error': 'User not found in GraphQL response'}
+            async with session.post(
+                'https://api.github.com/graphql',
+                json={'query': query, 'variables': variables},
+                headers=headers
+            ) as response:
+                if response.status == 200:
+                    # Process the result
+                    data = await response.json()
+                    if 'data' in data:
+                        # Store the raw GraphQL data for processing by aggregate_user_data_graphql
+                        result = {
+                            'graphql_data': data['data']
+                        }
+                        
+                        # Also extract the basic data for compatibility with existing code
+                        user_data = data['data'].get('user', {})
+                        if not user_data:
+                            return {'error': 'User not found in GraphQL response'}
+                            
+                        # Contributions collection
+                        contrib_data = user_data.get('contributionsCollection', {})
+                        
+                        # Extract pull request data
+                        pr_contribs = contrib_data.get('pullRequestContributions', {})
+                        result['pulls'] = {
+                            'total_count': pr_contribs.get('totalCount', 0),
+                            'items': [pr.get('pullRequest', {}) for pr in pr_contribs.get('nodes', [])]
+                        }
+                        
+                        # Extract issue data
+                        issue_contribs = contrib_data.get('issueContributions', {})
+                        result['issues'] = {
+                            'total_count': issue_contribs.get('totalCount', 0),
+                            'items': [ic.get('issue', {}) for ic in issue_contribs.get('nodes', [])]
+                        }
+                        
+                        # Extract repository data
+                        result['repos'] = {
+                            'total_count': user_data.get('repositories', {}).get('totalCount', 0),
+                            'items': user_data.get('repositories', {}).get('nodes', [])
+                        }
+                        
+                        # Extract reviews data
+                        review_contribs = contrib_data.get('pullRequestReviewContributions', {})
+                        result['reviews'] = {
+                            'total_count': review_contribs.get('totalCount', 0),
+                            'items': [rc.get('pullRequestReview', {}) for rc in review_contribs.get('nodes', [])]
+                        }
+                        
+                        # Extract repository data
+                        result['repo_commits'] = []
+                        for repo_contrib in contrib_data.get('commitContributionsByRepository', []):
+                            repo = repo_contrib.get('repository', {})
+                            repo_name = repo.get('name', '')
+                            if repo_name:
+                                result['repo_commits'].append({
+                                    'name': repo_name,
+                                    'owner': repo.get('owner', {}).get('login', ''),
+                                    'commit_count': repo_contrib.get('contributions', {}).get('totalCount', 0),
+                                    'commits': repo_contrib.get('contributions', {}).get('nodes', [])
+                                })
+                        
+                        return result
                     
-                # Contributions collection
-                contrib_data = user_data.get('contributionsCollection', {})
+                    return {'error': 'Invalid GraphQL response format'}
                 
-                # Extract pull request data
-                pr_contribs = contrib_data.get('pullRequestContributions', {})
-                result['pulls'] = {
-                    'total_count': pr_contribs.get('totalCount', 0),
-                    'items': [pr.get('pullRequest', {}) for pr in pr_contribs.get('nodes', [])]
-                }
+                elif response.status == 403:
+                    logger.error(f"GraphQL rate limit exceeded for {username}")
+                    return {'error': 'GraphQL rate limit exceeded'}
                 
-                # Extract issue data
-                issue_contribs = contrib_data.get('issueContributions', {})
-                result['issues'] = {
-                    'total_count': issue_contribs.get('totalCount', 0),
-                    'items': [ic.get('issue', {}) for ic in issue_contribs.get('nodes', [])]
-                }
-                
-                # Extract repository data
-                result['repos'] = {
-                    'total_count': user_data.get('repositories', {}).get('totalCount', 0),
-                    'items': user_data.get('repositories', {}).get('nodes', [])
-                }
-                
-                # Extract reviews data
-                review_contribs = contrib_data.get('pullRequestReviewContributions', {})
-                result['reviews'] = {
-                    'total_count': review_contribs.get('totalCount', 0),
-                    'items': [rc.get('pullRequestReview', {}) for rc in review_contribs.get('nodes', [])]
-                }
-                
-                # Extract discussions data
-                discussions_data = user_data.get('repositoryDiscussions', {})
-                result['discussions'] = {
-                    'total_count': discussions_data.get('totalCount', 0),
-                    'items': discussions_data.get('nodes', [])
-                }
-                
-                # Extract commits by repository
-                result['repo_commits'] = []
-                for repo_contrib in contrib_data.get('commitContributionsByRepository', []):
-                    repo = repo_contrib.get('repository', {})
-                    repo_name = repo.get('name', '')
-                    if repo_name:
-                        result['repo_commits'].append({
-                            'name': repo_name,
-                            'owner': repo.get('owner', {}).get('login', ''),
-                            'commit_count': repo_contrib.get('contributions', {}).get('totalCount', 0),
-                            'commits': repo_contrib.get('contributions', {}).get('nodes', [])
-                        })
-                
-                return result
-            
-            return {'error': 'Invalid GraphQL response format'}
+                else:
+                    logger.error(f"GraphQL request failed with status code {response.status}: {await response.text()}")
+                    return {'error': f'GraphQL request failed: {response.status} - {await response.text()}'}
             
     except ImportError:
         logger.warning("aiohttp not installed, falling back to GraphQL")
@@ -2703,10 +1988,6 @@ async def fetch_all_data(username):
             'reviews': {
                 'total_count': contrib_data.get('pullRequestReviewContributions', {}).get('totalCount', 0),
                 'items': [rc.get('pullRequestReview', {}) for rc in contrib_data.get('pullRequestReviewContributions', {}).get('nodes', [])]
-            },
-            'discussions': {
-                'total_count': user_data.get('repositoryDiscussions', {}).get('totalCount', 0),
-                'items': user_data.get('repositoryDiscussions', {}).get('nodes', [])
             }
         }
         
