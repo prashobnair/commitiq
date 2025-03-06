@@ -20,32 +20,16 @@ logger = logging.getLogger(__name__)
 # Try to import Redis, but make it optional
 try:
     import redis
-    redis_available = True
+    
     r = redis.Redis(host='localhost', port=6379, db=0)
     # Test Redis connection
     r.ping()
+    redis_available = True
     logger.info("Redis cache available")
 except (ImportError, redis.exceptions.ConnectionError) as e:
     redis_available = False
     r = None
     logger.warning(f"Redis not available: {str(e)}. Using in-memory cache.")
-
-
-# Initialize Redis client for caching if available
-redis_available = False
-r = None
-
-try:
-    import redis
-    # Connect to Redis - preferring environment variable config
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-    r = redis.from_url(redis_url)
-    r.ping()  # Test connection
-    redis_available = True
-    logging.info("Redis cache available")
-except (ImportError, redis.ConnectionError, redis.RedisError) as e:
-    logging.warning(f"Redis not available: {str(e)}. Using in-memory cache.")
-    # Fall back to lru_cache
 
 # Simple in-memory cache for fallback when Redis is not available
 memory_cache = {}
@@ -108,8 +92,6 @@ def get_cache_instance():
 
 # Define constants
 BOT_IDENTIFIERS = ['bot', 'actions', '-ci-', 'automation', 'dependabot']
-
-
 
 # Caching decorator
 def cache_response(ttl=3600):
@@ -179,126 +161,8 @@ def cache_response(ttl=3600):
     
     return decorator
 
-# GitHub API class for rate limit handling
-class GitHubAPI:
-    def __init__(self):
-        # Get tokens from environment variable (comma-separated list)
-        tokens_str = os.environ.get("GITHUB_TOKENS", os.environ.get("GITHUB_TOKEN", ""))
-        self.tokens = [t.strip() for t in tokens_str.split(',') if t.strip()]
-        
-        # Fallback to single token if no tokens list is provided
-        if not self.tokens:
-            logger.warning("No GitHub tokens found in environment variables")
-            self.tokens = [""]  # Empty token as fallback
-            
-        self.current_token_index = 0
-        self.last_call = 0
-        self.token_rate_limits = {token: {'remaining': 5000, 'reset_time': 0} for token in self.tokens}
-        
-    def get_token(self):
-        """Get the next available token using round-robin rotation"""
-        # If we only have one token, just return it
-        if len(self.tokens) == 1:
-            return self.tokens[0]
-            
-        # Try to find a token with remaining rate limit
-        start_index = self.current_token_index
-        while True:
-            token = self.tokens[self.current_token_index]
-            
-            # Check if this token has remaining rate limit
-            if self.token_rate_limits[token]['remaining'] > 10:
-                return token
-                
-            # Check if reset time has passed
-            if time.time() > self.token_rate_limits[token]['reset_time']:
-                # Reset the remaining count since the reset time has passed
-                self.token_rate_limits[token]['remaining'] = 5000
-                return token
-                
-            # Move to the next token
-            self.current_token_index = (self.current_token_index + 1) % len(self.tokens)
-            
-            # If we've checked all tokens and come back to the start, use the one with the earliest reset time
-            if self.current_token_index == start_index:
-                # Find token with earliest reset time
-                token = min(self.tokens, key=lambda t: self.token_rate_limits[t]['reset_time'])
-                
-                # If all tokens are rate limited, sleep until the earliest reset time
-                sleep_duration = max(self.token_rate_limits[token]['reset_time'] - time.time(), 10)
-                if sleep_duration > 0:
-                    logger.warning(f"All tokens rate limited. Sleeping for {sleep_duration} seconds")
-                    time.sleep(sleep_duration)
-                    
-                return token
-        
-    def make_request(self, url: str) -> requests.Response:
-        """Make a rate-limited request to the GitHub API using token rotation"""
-        # Get the next available token
-        token = self.get_token()
-        headers = {'Authorization': f'token {token}'} if token else {}
-        
-        # Respect GitHub's rate limits with a small delay between requests
-        now = time.time()
-        if now - self.last_call < 1.1:
-            time.sleep(1.1 - (now - self.last_call))
-        
-        try:
-            response = requests.get(url, headers=headers, timeout=30)
-            self.last_call = time.time()
-            
-            # Handle rate limiting response with status code 403
-            if response.status_code == 403 and 'X-RateLimit-Remaining' in response.headers and int(response.headers.get('X-RateLimit-Remaining', 0)) == 0:
-                reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-                wait_time = max(reset_time - time.time(), 10)
-                
-                if len(self.tokens) > 1:
-                    # If multiple tokens available, mark this one as rate-limited
-                    self.token_rate_limits[token]['remaining'] = 0
-                    self.token_rate_limits[token]['reset_time'] = reset_time
-                    # Recursive call to retry with a different token
-                    return self.make_request(url)
-                else:
-                    # Only one token available, need to wait
-                    logger.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds")
-                    time.sleep(wait_time)
-                    return self.make_request(url)
-            
-            # Update rate limit information for this token
-            self.handle_rate_limits(response, token)
-            
-            return response
-        except requests.RequestException as e:
-            logger.error(f"Request error: {str(e)}")
-            # Raise exception to be handled by caller
-            raise
-    
-    def handle_rate_limits(self, response: requests.Response, token: str) -> None:
-        """Handle GitHub API rate limits and update token status"""
-        # Skip if no token or not a GitHub API response
-        if not token or 'X-RateLimit-Remaining' not in response.headers:
-            return
-            
-        # Update rate limit information for this token - use safer int conversion
-        try:
-            remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
-            reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-            
-            self.token_rate_limits[token] = {
-                'remaining': remaining,
-                'reset_time': reset_time
-            }
-            
-            # Log warning if rate limit is getting low
-            if remaining < 10:
-                sleep_duration = max(reset_time - time.time(), 10)
-                logger.warning(f"Rate limit almost reached for token. Remaining: {remaining}. Reset in {sleep_duration} seconds")
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error parsing rate limit headers: {e}")
-            # Keep existing values if parsing fails
-            pass
-
 # --- Constants ---
+#Prashob: @todo Need to review these constans
 MAX_STARS = 10000  # Normalization baseline for stars
 MAX_FORKS = 50000 # Example
 MAX_CONTRIBUTORS = 100  # Normalization baseline for contributors
@@ -307,23 +171,6 @@ MAX_PRS = 500
 MAX_ISSUES = 500
 MAX_REVIEWS = 500
 TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
-
-# --- Helper Functions ---
-def is_bot(user_data: any) -> bool:
-    """Check if user is a bot account using GitHub's official bot detection"""
-    # Handle empty input
-    if not user_data:
-        return False
-    
-    if isinstance(user_data, dict):
-        return user_data.get('type') == 'Bot' or any(
-            bot_id in user_data.get('login', '').lower() 
-            for bot_id in BOT_IDENTIFIERS
-        )
-    else:
-        # If it's a string (username), use it directly
-        login = str(user_data)
-        return any(bot_id in login.lower() for bot_id in BOT_IDENTIFIERS)
 
 def calculate_commit_frequency(commits, time_window_days=TIME_WINDOW_DAYS):
     """
@@ -506,200 +353,6 @@ def normalize_metric(value: float, max_value: float) -> float:
         return 0
     return min(value / max_value, 1.0)
 
-
-# --- Generic API Fetching Function ---
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type((ConnectionError, Timeout, RequestException)))
-def get_user_contributions(url_template, username, contribution_type, **kwargs):
-    """Generic pagination handler for GitHub API"""
-    api = GitHubAPI()  # Use our new GitHubAPI class
-    url = url_template.format(username=username, **kwargs)  # Pass additional params
-    
-    logger.debug(f"Fetching {contribution_type} for {username} from {url}")
-
-    items = []
-    next_url = url
-    while next_url:
-        try:
-            response = api.make_request(next_url)  # Use the rate-limited request method
-            response.raise_for_status()  # Raise HTTPError for bad requests (4XX, 5XX)
-            data = response.json()
-
-            # Handle different response structures
-            if 'items' in data:  # Search API responses
-                items.extend(data['items'])
-            else:  # Direct list responses
-                items.extend(data)
-
-            # Handle pagination
-            next_url = response.links.get('next', {}).get('url')
-            # No need for sleep here as GitHubAPI.make_request handles rate limiting
-
-        except RequestException as e:
-            logger.error(f"Error fetching {contribution_type}: {str(e)}")
-            return {'error': f"Error fetching {contribution_type}: {str(e)}"}
-        except ValueError as e:
-            logger.error(f"JSON parsing error for {contribution_type}: {str(e)}")
-            return {'error': f"JSON parsing error: {str(e)}"}
-        except Exception as e:
-            logger.error(f"Unexpected error fetching {contribution_type}: {str(e)}")
-            return {'error': f"Unexpected error: {str(e)}"}
-
-    return items
-
-# --- Specific API Functions (using the generic function) ---
-
-@cache_response()
-def get_user_pulls(username):
-    """Fetch user's pull requests from GitHub API"""
-    url_template = (
-        'https://api.github.com/search/issues?'
-        'q=is:pr+author:{username}+created:>={date}&per_page=100'
-    )
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "pull_requests", date=since_date)
-
-@cache_response()
-def get_user_issues(username):
-    """Fetch user's issues from GitHub API"""
-    url_template = (
-        'https://api.github.com/search/issues?'
-        'q=is:issue+author:{username}+created:>={date}&per_page=100'
-    )
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "issues", date=since_date)
-
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type((ConnectionError, Timeout, RequestException)))
-@cache_response()
-def get_user_reviews(username):
-    """Fetch user's code reviews from GitHub API"""
-    url_template = (
-        'https://api.github.com/search/issues?'
-        'q=is:pr+reviewed-by:{username}+created:>={date}&per_page=100'
-    )
-    since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    return get_user_contributions(url_template, username, "reviews", date=since_date)
-
-@cache_response()
-def get_user_repos(username):
-    """Fetch user repositories, handling pagination.
-    
-    DEPRECATED: Use GraphQL data from get_user_contributions_graphql instead.
-    This function is kept for backward compatibility and as a fallback.
-    """
-    logger.warning("get_user_repos is deprecated - use GraphQL data instead")
-    url_template = f'https://api.github.com/users/{{username}}/repos?per_page=100'
-    return get_user_contributions(url_template, username, "repositories")
-
-
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type((ConnectionError, Timeout, RequestException)))
-@cache_response()
-def get_repo_commits(username, repo_name):
-    """
-    Get commits for a specific repository.
-    
-    DEPRECATED: Use GraphQL data from get_user_contributions_graphql instead.
-    This function is kept for backward compatibility and as a fallback.
-    The GraphQL query already fetches commit data through commitContributionsByRepository.
-    """
-    logger.warning("get_repo_commits is deprecated - use GraphQL data instead")
-    github_api = GitHubAPI()
-    url = f"https://api.github.com/repos/{username}/{repo_name}/commits?per_page=100"
-    
-    response = github_api.make_request(url)
-    
-    if response.status_code == 200:
-        logger.debug(f"Fetching commits for repo: {repo_name}, URL: {url}, Status: {response.status_code}")
-        return response.json()
-    elif response.status_code == 409:  # Empty repository
-        logger.debug(f"Empty repository detected for {repo_name} (409 Conflict)")
-        return []
-    else:
-        logger.error(f"Error fetching commits for {repo_name}: Status {response.status_code} - {response.text}")
-        return {"error": f"Failed to fetch commits: Status {response.status_code}"}
-
-# --- Aggregation and Calculation Functions ---
-@cache_response()
-def aggregate_user_data(username, async_data=None):
-    """Aggregate GitHub user data including repositories, commits, issues, and pull requests.
-    
-    This function uses GraphQL for efficient data fetching.
-    
-    Args:
-        username (str): GitHub username
-        async_data (dict): Optional async data from fetch_all_data function
-        
-    Returns:
-        dict: Aggregated user data with metrics
-    """
-    try:
-        # Use GraphQL as the primary data source
-        if async_data and 'graphql_data' in async_data:
-            # If we have GraphQL data from async fetching, use it directly
-            graphql_result = {'data': async_data['graphql_data']}
-            return aggregate_user_data_graphql(username, graphql_result)
-        else:
-            # Get data from GraphQL
-            graphql_data = get_user_contributions_graphql(username)
-            
-            # If successful, use GraphQL data
-            if not (isinstance(graphql_data, dict) and 'error' in graphql_data):
-                return aggregate_user_data_graphql(username, {'data': graphql_data})
-            else:
-                return graphql_data  # Return the error from GraphQL
-    except Exception as e:
-        logger.error(f"Error in aggregate_user_data: {str(e)}")
-        return {'error': f"Error aggregating user data: {str(e)}"}
-
-def calculate_test_coverage(commits: list) -> float:
-    """Estimate test coverage through commit patterns and file analysis"""
-    if not commits:
-        return 0
-        
-    # Keywords that indicate test-related activity
-    test_keywords = [
-        'test', 'spec', 'coverage', 'jest', 'pytest', 'unittest', 
-        'mocha', 'jasmine', 'cypress', 'selenium', 'qunit', 'rspec'
-    ]
-    
-    # Count test-related commits
-    test_commits = 0
-    test_files = set()
-    code_files = set()
-    
-    for commit in commits:
-        # Check commit message
-        message = commit.get('commit', {}).get('message', '').lower()
-        if any(kw in message for kw in test_keywords):
-            test_commits += 1
-        
-        # Analyze files in the commit
-        for file_info in commit.get('files', []):
-            filename = file_info.get('filename', '').lower()
-            
-            # Skip if no filename
-            if not filename:
-                continue
-                
-            # Identify test files
-            is_test_file = (
-                'test' in filename or 
-                'spec' in filename or 
-                filename.endswith(('.test.js', '.spec.js', '_test.py', 'test_.py', '_spec.py', 'spec_.py'))
-            )
-            
-            if is_test_file:
-                test_files.add(filename)
-            elif any(filename.endswith(ext) for ext in ['.py', '.js', '.ts', '.java', '.c', '.cpp', '.go', '.rs']):
-                code_files.add(filename)
-    
-    # Calculate metrics
-    test_commit_ratio = test_commits / len(commits) if commits else 0
-    test_file_ratio = len(test_files) / max(len(code_files), 1) if code_files else 0
-    
-    # Combine metrics (weighted average)
-    return (0.4 * test_commit_ratio + 0.6 * test_file_ratio) * 100  # Convert to percentage
-
-
 class GitHubGraphQL:
     """GraphQL client for GitHub API"""
     
@@ -842,227 +495,20 @@ class GitHubGraphQL:
             pass
 
 @cache_response()
-def get_user_contributions_graphql(username, time_window_days=365):
-    """Fetch user contributions using GitHub GraphQL API
-    
-    This single request gets most of the data needed for analysis:
-    - Commit contributions by repository
-    - Pull request contributions
-    - Issue contributions
-    - Code review contributions
-    
-    Returns a comprehensive structure with all the data.
-    """
-    graphql = GitHubGraphQL()
-    
-    # Calculate the date for the time window
-    since_date = (datetime.now() - timedelta(days=time_window_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
-    # Define the GraphQL query
-    query = """
-    query ($login: String!, $since: DateTime!) {
-      user(login: $login) {
-        name
-        email
-        url
-        avatarUrl
-        createdAt
-        location
-        company
-        bio
-        followers {
-          totalCount
-        }
-        following {
-          totalCount
-        }
-        contributionsCollection(from: $since) {
-          totalCommitContributions
-          totalPullRequestContributions
-          totalPullRequestReviewContributions
-          totalIssueContributions
-          contributionCalendar {
-            totalContributions
-            weeks {
-              contributionDays {
-                date
-                contributionCount
-              }
-            }
-          }
-          commitContributionsByRepository(maxRepositories: 100) {
-            repository {
-              name
-              owner {
-                login
-              }
-              stargazerCount
-              forkCount
-              isPrivate
-              isFork
-              primaryLanguage {
-                name
-              }
-              languages(first: 10) {
-                nodes {
-                  name
-                }
-              }
-            }
-            contributions(first: 100) {
-              totalCount
-              nodes {
-                commitCount
-                repository {
-                  name
-                }
-                occurredAt
-              }
-            }
-          }
-          pullRequestContributions(first: 100) {
-            totalCount
-            nodes {
-              pullRequest {
-                title
-                merged
-                mergedAt
-                createdAt
-                repository {
-                  name
-                }
-                changedFiles
-                additions
-                deletions
-              }
-            }
-          }
-          pullRequestReviewContributions(first: 100) {
-            totalCount
-            nodes {
-              pullRequestReview {
-                repository {
-                  name
-                }
-                createdAt
-                state
-                comments {
-                  totalCount
-                }
-              }
-            }
-          }
-          issueContributions(first: 100) {
-            totalCount
-            nodes {
-              issue {
-                title
-                createdAt
-                repository {
-                  name
-                }
-                state
-                comments {
-                  totalCount
-                }
-              }
-            }
-          }
-        }
-        repositories(first: 100, orderBy: {field: STARGAZERS, direction: DESC}) {
-          totalCount
-          nodes {
-            name
-            stargazerCount
-            forkCount
-            isFork
-            isPrivate
-            primaryLanguage {
-              name
-            }
-            languages(first: 10) {
-              nodes {
-                name
-              }
-            }
-            owner {
-              login
-            }
-            # Added release data
-            releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) {
-              totalCount
-              nodes {
-                name
-                createdAt
-                tagName
-                isPrerelease
-                isDraft
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-    
-    # Execute the query with variables
-    variables = {
-        "login": username,
-        "since": since_date
-    }
-    
-    try:
-        # Execute the GraphQL query
-        result = graphql.execute_query(query, variables)
-        
-        # Check if result is None
-        if result is None:
-            logger.error(f"GraphQL query returned None for {username}")
-            return {'error': 'GraphQL query failed'}
-        
-        # Check for errors
-        if 'errors' in result:
-            logger.error(f"GraphQL errors for {username}: {result['errors']}")
-            return {'error': result['errors']}
-        
-        # Return the data
-        return result['data']
-    except Exception as e:
-        logger.error(f"Error fetching GraphQL data for {username}: {str(e)}")
-        return {'error': f"Error fetching GraphQL data: {str(e)}"}
-
-@cache_response()
-def aggregate_user_data_graphql(username, graphql_data=None):
+def aggregate_user_data(username, github_data):
     """Aggregate GitHub user data 
     
     Args:
         username (str): GitHub username
-        graphql_data (dict): Optional pre-fetched GraphQL data from fetch_all_data
+        graphql_data (dict): pre-fetched GraphQL data from fetch_all_data
         
     Returns:
         dict: Aggregated user data with metrics
     """
     try:
-        # Get GraphQL data - either from parameter or by fetching it
-        if graphql_data is None:
-            # Get all data with a single GraphQL query
-            raw_data = get_user_contributions_graphql(username)
-        else:
-            # Use the provided data
-            raw_data = graphql_data.get('data') if isinstance(graphql_data, dict) and 'data' in graphql_data else graphql_data
-        
-        # Check if there was an error or if raw_data is None
-        if raw_data is None:
-            logger.error(f"Raw GraphQL data is None for user {username}")
-            return {'error': 'Failed to fetch GraphQL data'}
-            
-        if isinstance(raw_data, dict) and 'error' in raw_data:
-            return raw_data
-        
         # Initialize results dictionary
         result = {
             'username': username,
-            'raw_graphql_data': raw_data,  # Store the raw data for potential reuse
             'metrics': {},
             'repositories': {},
             'activity': {
@@ -1074,15 +520,15 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         }
         
         # Extract user information
-        user_data = raw_data.get('user', {}) if isinstance(raw_data, dict) else {}
+        user_data = github_data.get('user', {})
+        
         if not user_data:
             logger.error(f"User data not found in GraphQL response for {username}")
-            return {'error': 'User not found'}
+            return {'error': f'User not found'}
         
         # Basic user info
         result['name'] = user_data.get('name')
         result['email'] = user_data.get('email')
-        result['avatar_url'] = user_data.get('avatarUrl')
         result['url'] = user_data.get('url')
         result['company'] = user_data.get('company')
         result['location'] = user_data.get('location')
@@ -1091,7 +537,7 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
         
         # Get contributions collection data
-        contrib_data = user_data.get('contributionsCollection', {}) if user_data is not None else {}
+        contrib_data = user_data.get('contributionsCollection', {})
         
         # Count metrics
         result['activity']['commits'] = contrib_data.get('totalCommitContributions', 0)
@@ -1117,7 +563,7 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         result['metrics']['consistency'] = active_days / days_in_period if days_in_period > 0 else 0
         
         # Process repositories
-        repos = user_data.get('repositories', {}) if user_data is not None else {}
+        repos = user_data.get('repositories', {})
         repo_nodes = repos.get('nodes', []) if repos is not None else []
         
         # Calculate repository metrics
@@ -1384,8 +830,7 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         else:
             result['metrics']['avg_days_between_releases'] = 90  # Default value
         
-        # Calculate overall impact score
-        result['impact_score'] = calculate_impact_score_graphql(result)
+        result['project_impact'] = calculate_overall_project_impact(result['repositories'])
         
         return result
     except Exception as e:
@@ -1393,7 +838,7 @@ def aggregate_user_data_graphql(username, graphql_data=None):
         return {'error': f"Error aggregating user data: {str(e)}"}
 
 
-def calculate_impact_score_graphql(data):
+def calculate_impact_score(data):
     """Calculate the impact score based on GraphQL data
     
     This optimized version uses parallel processing for large datasets.
@@ -1599,62 +1044,19 @@ def _calculate_impact_score_parallel(data):
         logger.error(f"Error in parallel impact score calculation: {str(e)}")
         raise  # Re-raise to fall back to sequential processing
 
-def calculate_impact_score(aggregated_data: dict) -> float:
-    """A wrapper around calculate_impact_score_graphql for backward compatibility.
-    
-    This function prioritizes metrics based on hiring manager survey data:
-    - Merged PRs to active repos (32% weight)
-    - Code review depth (28% weight)
-    - Maintenance burden (19% weight)
-    - Project popularity (15% weight)
-    - Documentation (6% weight)
-    """
-    # Simply call the GraphQL version now to ensure consistent scoring
-    result = calculate_impact_score_graphql(aggregated_data)
-    if isinstance(result, dict):
-        if 'error' in result:
-            # If there's an error, raise it to be handled by the caller
-            raise ValueError(result['error'])
-        elif 'total' in result:
-            return result['total']
-    return 0  # Default to 0 if there's an error
-
-# Add this function after the other get_user_* functions
-@cache_response()
-def get_user_info(username):
-    """Fetch user information from GitHub API"""
-    api = GitHubAPI()
-    url = f'https://api.github.com/users/{username}'
-    try:
-        response = api.make_request(url)
-        response.raise_for_status()
-        return response.json()
-    except RequestException as e:
-        logger.error(f"Error fetching user info: {str(e)}")
-        return {'error': f"Error fetching user info: {str(e)}"}
-    except ValueError as e:
-        logger.error(f"JSON parsing error for user info: {str(e)}")
-        return {'error': f"JSON parsing error: {str(e)}"}
-    except Exception as e:
-        logger.error(f"Unexpected error fetching user info: {str(e)}")
-        return {'error': f"Unexpected error: {str(e)}"}
-
-def calculate_overall_project_impact(aggregated_data: dict) -> float:
+def calculate_overall_project_impact(repos: dict) -> float:
     """Calculate overall project impact based on individual repo impacts"""
     # Calculate overall project impact based on individual repo impacts
     total_impact = 0
     
-    # Check if repos is a list before iterating
-    repos = aggregated_data.get('repos', [])
-    if not isinstance(repos, list):
-        logger.error(f"Expected repos to be a list, got {type(repos)}: {repos}")
-        return 0
+    for repo, repo_data in repos.items():
         
-    for repo in repos:
-        is_original = not repo.get('fork', False)  # check if the repo is forked
-        repo['impact_score'] = calculate_project_impact(repo, is_original)  # Calculate individual repo impact
-        total_impact += repo['impact_score']
+        is_original = not repo_data['is_fork']  # check if the repo is forked
+        
+        project_impact_score = calculate_project_impact(repo_data, is_original)  # Calculate individual repo impact
+        total_impact += project_impact_score
     
+    logger.info(f"Prashob:Total impact: {total_impact}"),
     # Normalize to a 0-100 scale
     return min(total_impact * 100, 100)
 
@@ -1703,16 +1105,12 @@ def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
             contributors_weight * normalized_contributors
         )
     ) * age_factor
-
+    
     return project_impact_score
 
-# Async version for parallel data fetching
-async def fetch_all_data(username):
+def fetch_all_data(username):
     """Fetch all GitHub data for a user asynchronously using GraphQL."""
     try:
-        # Check if aiohttp is available
-        import aiohttp
-        
         # Calculate the date for the time window
         since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
@@ -1859,149 +1257,22 @@ async def fetch_all_data(username):
         }
         """
         
-        # Use an existing token
-        token = os.environ.get("GITHUB_TOKEN", "")
-        headers = {'Authorization': f'Bearer {token}'} if token else {}
-        
-        # Configure timeout and other session parameters
-        timeout = aiohttp.ClientTimeout(total=90)  # Longer timeout for the large GraphQL query
-        
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            
-            variables = {
+        variables = {
                 "login": username,
                 "since": since_date
             }
-            
-            async with session.post(
-                'https://api.github.com/graphql',
-                json={'query': query, 'variables': variables},
-                headers=headers
-            ) as response:
-                if response.status == 200:
-                    # Process the result
-                    data = await response.json()
-                    if 'data' in data:
-                        # Store the raw GraphQL data for processing by aggregate_user_data_graphql
-                        result = {
-                            'graphql_data': data['data']
-                        }
-                        
-                        # Also extract the basic data for compatibility with existing code
-                        user_data = data['data'].get('user', {})
-                        if not user_data:
-                            return {'error': 'User not found in GraphQL response'}
-                        
-                        # Contributions collection
-                        contrib_data = user_data.get('contributionsCollection', {})
-                        
-                        # Extract pull request data
-                        pr_contribs = contrib_data.get('pullRequestContributions', {})
-                        
-                        result['pulls'] = {
-                            'total_count': pr_contribs.get('totalCount', 0),
-                            'items': [pr.get('pullRequest', {}) for pr in pr_contribs.get('nodes', [])]
-                        }
-                        
-                        # Extract issue data
-                        issue_contribs = contrib_data.get('issueContributions', {})
-                        result['issues'] = {
-                            'total_count': issue_contribs.get('totalCount', 0),
-                            'items': [ic.get('issue', {}) for ic in issue_contribs.get('nodes', [])]
-                        }
-                        
-                        # Extract repository data
-                        result['repos'] = {
-                            'total_count': user_data.get('repositories', {}).get('totalCount', 0),
-                            'items': user_data.get('repositories', {}).get('nodes', [])
-                        }
-                        
-                        # Extract reviews data
-                        review_contribs = contrib_data.get('pullRequestReviewContributions', {})
-                        result['reviews'] = {
-                            'total_count': review_contribs.get('totalCount', 0),
-                            'items': [rc.get('pullRequestReview', {}) for rc in review_contribs.get('nodes', [])]
-                        }
-                        
-                        # Extract repository data
-                        result['repo_commits'] = []
-                        for repo_contrib in contrib_data.get('commitContributionsByRepository', []):
-                            repo = repo_contrib.get('repository', {})
-                            repo_name = repo.get('name', '')
-                            if repo_name:
-                                result['repo_commits'].append({
-                                    'name': repo_name,
-                                    'owner': repo.get('owner', {}).get('login', ''),
-                                    'commit_count': repo_contrib.get('contributions', {}).get('totalCount', 0),
-                                    'commits': repo_contrib.get('contributions', {}).get('nodes', [])
-                                })
-                        
-                        return result
-                    
-                    return {'error': 'Invalid GraphQL response format'}
-                
-                elif response.status == 403:
-                    logger.error(f"GraphQL rate limit exceeded for {username}")
-                    return {'error': 'GraphQL rate limit exceeded'}
-                
-                else:
-                    logger.error(f"GraphQL request failed with status code {response.status}: {await response.text()}")
-                    return {'error': f'GraphQL request failed: {response.status} - {await response.text()}'}
-            
-    except ImportError:
-        logger.warning("aiohttp not installed, falling back to GraphQL")
-        # Fall back to synchronous GraphQL
-        graphql_data = get_user_contributions_graphql(username)
         
-        if isinstance(graphql_data, dict) and 'error' in graphql_data:
-            return graphql_data
-            
-        # Process the result
-        user_data = graphql_data.get('user', {})
-        if not user_data:
-            return {'error': 'User not found'}
-            
-        # Contributions collection
-        contrib_data = user_data.get('contributionsCollection', {})
+        graphql = GitHubGraphQL()  # Instantiate the GraphQL client
+        graphql_response = graphql.execute_query(query, variables) 
+
+        if 'data' in graphql_response:
+            return graphql_response['data']
         
-        # Extract data in the same format as the async version
-        result = {
-            'graphql_data': graphql_data,
-            'pulls': {
-                'total_count': contrib_data.get('pullRequestContributions', {}).get('totalCount', 0),
-                'items': [pr.get('pullRequest', {}) for pr in contrib_data.get('pullRequestContributions', {}).get('nodes', [])]
-            },
-            'issues': {
-                'total_count': contrib_data.get('issueContributions', {}).get('totalCount', 0),
-                'items': [ic.get('issue', {}) for ic in contrib_data.get('issueContributions', {}).get('nodes', [])]
-            },
-            'repos': {
-                'total_count': user_data.get('repositories', {}).get('totalCount', 0),
-                'items': user_data.get('repositories', {}).get('nodes', [])
-            },
-            'reviews': {
-                'total_count': contrib_data.get('pullRequestReviewContributions', {}).get('totalCount', 0),
-                'items': [rc.get('pullRequestReview', {}) for rc in contrib_data.get('pullRequestReviewContributions', {}).get('nodes', [])]
-            }
-        }
+        return {'error': 'Invalid GraphQL response format.'}
         
-        # Add commit data
-        result['repo_commits'] = []
-        for repo_contrib in contrib_data.get('commitContributionsByRepository', []):
-            repo = repo_contrib.get('repository', {})
-            repo_name = repo.get('name', '')
-            if repo_name:
-                result['repo_commits'].append({
-                    'name': repo_name,
-                    'owner': repo.get('owner', {}).get('login', ''),
-                    'commit_count': repo_contrib.get('contributions', {}).get('totalCount', 0),
-                    'commits': repo_contrib.get('contributions', {}).get('nodes', [])
-                })
-        
-        return result
     except Exception as e:
-        logger.error(f"Error in async GraphQL data fetching: {str(e)}")
-        return {'error': f"Error in async data fetching: {str(e)}"}
+        logger.error(f"Error in GraphQL data fetching: {str(e)}")
+        return {'error': f"Error in data fetching: {str(e)}"}
 
 # --- Batch Processing ---
 async def batch_process_users(usernames: list) -> dict:
