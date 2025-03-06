@@ -12,8 +12,7 @@ analysis_bp = Blueprint('analysis', __name__)
 
 @analysis_bp.route('/analyze/<username>', methods=['GET'])
 def analyze_user(username):
-    logger.info(f"TEST: Analyzing user: {username} at {time.time()}")  # Log with timestamp
-    logger.debug(f"Analyzing user: {username}")  # Log entry point
+    logger.info(f"Analyzing user: {username}")  # Log entry point
     try:
         # Use asyncio.run to call the async function from synchronous code
         async_data = asyncio.run(fetch_all_data(username))

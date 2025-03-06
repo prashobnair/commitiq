@@ -701,7 +701,7 @@ def calculate_test_coverage(commits: list) -> float:
 
 
 class GitHubGraphQL:
-    """GraphQL client for GitHub API - much more efficient than REST for bulk data"""
+    """GraphQL client for GitHub API"""
     
     def __init__(self):
         # Get tokens from environment variable (comma-separated list)
@@ -843,7 +843,7 @@ class GitHubGraphQL:
 
 @cache_response()
 def get_user_contributions_graphql(username, time_window_days=365):
-    """Fetch user contributions using GitHub GraphQL API - much more efficient than REST
+    """Fetch user contributions using GitHub GraphQL API
     
     This single request gets most of the data needed for analysis:
     - Commit contributions by repository
@@ -858,7 +858,7 @@ def get_user_contributions_graphql(username, time_window_days=365):
     # Calculate the date for the time window
     since_date = (datetime.now() - timedelta(days=time_window_days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     
-    # Define the GraphQL query - this replaces many separate REST API calls
+    # Define the GraphQL query
     query = """
     query ($login: String!, $since: DateTime!) {
       user(login: $login) {
@@ -1033,11 +1033,7 @@ def get_user_contributions_graphql(username, time_window_days=365):
 
 @cache_response()
 def aggregate_user_data_graphql(username, graphql_data=None):
-    """Aggregate GitHub user data using the more efficient GraphQL API
-    
-    This function replaces multiple separate REST API calls with a single
-    GraphQL query, which is much more efficient. The time window is also
-    reduced from 2 years to 1 year for better performance.
+    """Aggregate GitHub user data 
     
     Args:
         username (str): GitHub username
@@ -1720,15 +1716,12 @@ async def fetch_all_data(username):
         # Calculate the date for the time window
         since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
-        # Define the GraphQL query - this single query replaces multiple REST API calls
+        # Define the GraphQL query
         query = """
         query ($login: String!, $since: DateTime!) {
           user(login: $login) {
             name
             email
-            url
-            avatarUrl
-            createdAt
             location
             company
             bio
@@ -1874,7 +1867,7 @@ async def fetch_all_data(username):
         timeout = aiohttp.ClientTimeout(total=90)  # Longer timeout for the large GraphQL query
         
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # Use only one GraphQL call instead of multiple REST calls
+            
             variables = {
                 "login": username,
                 "since": since_date
@@ -1898,12 +1891,13 @@ async def fetch_all_data(username):
                         user_data = data['data'].get('user', {})
                         if not user_data:
                             return {'error': 'User not found in GraphQL response'}
-                            
+                        
                         # Contributions collection
                         contrib_data = user_data.get('contributionsCollection', {})
                         
                         # Extract pull request data
                         pr_contribs = contrib_data.get('pullRequestContributions', {})
+                        
                         result['pulls'] = {
                             'total_count': pr_contribs.get('totalCount', 0),
                             'items': [pr.get('pullRequest', {}) for pr in pr_contribs.get('nodes', [])]

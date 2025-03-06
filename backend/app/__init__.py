@@ -80,18 +80,14 @@ def create_app(config_class=Config):
     logger = setup_logging(app)
     
     CORS(app)  # Enable CORS for all routes
-    logger.info("CORS enabled for all routes")
-
+    
     # Load environment variables
     load_dotenv()
-    logger.info("Environment variables loaded")
-
+    
     # Register blueprints
     app.register_blueprint(api_bp, url_prefix='/api')  # Register api_bp
-    logger.info("API blueprint registered")
-
+    
     # Return the Flask app directly
-    logger.info("Application initialization complete")
     return app
     
     # Comment out ASGI conversion for now
