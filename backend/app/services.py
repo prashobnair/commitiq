@@ -13,7 +13,8 @@ import asyncio
 import random
 import zlib
 import sys
-
+import math
+import numpy as np
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,21 @@ def get_cache_instance():
     return MemoryCache()
 
 # Define constants
-BOT_IDENTIFIERS = ['bot', 'actions', '-ci-', 'automation', 'dependabot']
+NORMALIZATION_THRESHOLDS = {
+    'pulls': (5, 100),
+    'commits': (10, 250),
+    'reviews': (5, 100),
+    'issues': (2, 50),
+    'repo_impact': (10, 100),
+    'consistency': (10, 35),
+    'technical_impact': (0.1, 4.0),
+    'ecosystem_impact': (0, 500)
+}
+
+REPO_IMPACT_WEIGHTS = {
+    'technical': 0.7,
+    'ecosystem': 0.3
+}
 
 # Caching decorator
 def cache_response(ttl=3600):
@@ -331,14 +346,15 @@ def aggregate_user_data(username, github_data):
         # Initialize results dictionary
         result = {
             'username': username,
-            'metrics': {},
-            'repositories': {},
-            'activity': {
-                'commits': 0,
+            'contributions': {
                 'pulls': 0,
+                'commits': 0,
                 'issues': 0,
-                'reviews': 0
-            }
+                'reviews': 0,
+                'repo_impact': 0,
+                'consistency': 0
+            },
+            'raw_data': github_data
         }
         
         # Extract user information
@@ -349,311 +365,96 @@ def aggregate_user_data(username, github_data):
             return {'error': f'User not found'}
         
         # Basic user info
-        result['name'] = user_data.get('name')
-        result['email'] = user_data.get('email')
-        result['url'] = user_data.get('url')
-        result['company'] = user_data.get('company')
-        result['location'] = user_data.get('location')
-        result['bio'] = user_data.get('bio')
+        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio']})
         result['followers'] = user_data.get('followers', {}).get('totalCount', 0) if user_data.get('followers') is not None else 0
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
         
-        # Get contributions collection data
-        contrib_data = user_data.get('contributionsCollection', {})
+        # Get contribution metrics
+        result['contributions']['pulls'] = user_data.get('contributionsCollection', {}).get('totalPullRequestContributions', 0)
+        result['contributions']['commits'] = user_data.get('contributionsCollection', {}).get('totalCommitContributions', 0)
+        result['contributions']['reviews'] = user_data.get('contributionsCollection', {}).get('totalPullRequestReviewContributions', 0)
+        result['contributions']['issues'] = user_data.get('contributionsCollection', {}).get('totalIssueContributions', 0)
         
-        # Count metrics
-        result['activity']['commits'] = contrib_data.get('totalCommitContributions', 0)
-        result['activity']['pulls'] = contrib_data.get('totalPullRequestContributions', 0)
-        result['activity']['reviews'] = contrib_data.get('totalPullRequestReviewContributions', 0)
-        result['activity']['issues'] = contrib_data.get('totalIssueContributions', 0)
-        
-        # Get calendar data for consistency calculation
-        calendar = contrib_data.get('contributionCalendar', {}) if contrib_data is not None else {}
-        total_contributions = calendar.get('totalContributions', 0)
-        result['metrics']['total_contributions'] = total_contributions
-        
-        # Active days calculation
-        active_days = 0
-        weeks = calendar.get('weeks', [])
-        for week in weeks:
-            for day in week.get('contributionDays', []):
-                if day.get('contributionCount', 0) > 0:
-                    active_days += 1
-        
-        # Calculate consistency (active days / total days in time window)
-        days_in_period = TIME_WINDOW_DAYS
-        result['metrics']['consistency'] = active_days / days_in_period if days_in_period > 0 else 0
-        
-        # Process repositories
-        repos = user_data.get('repositories', {})
-        repo_nodes = repos.get('nodes', []) if repos is not None else []
-        
-        # Calculate repository metrics
-        total_stars = 0
-        total_forks = 0
-        original_repos = 0
-        languages = set()
-        
-        for repo in repo_nodes:
-            if repo is None:
-                continue
-                
-            repo_name = repo.get('name', '')
-            if not repo_name:
-                continue
-                
-            # Skip private repos
+        # Get weighted repository metrics
+        repos = user_data.get('repositories', {}).get('nodes', [])
+        repo_impacts = []
+
+        for repo in repos:
             if repo.get('isPrivate', False):
                 continue
                 
-            # Get basic repo data
+            # Get repository metrics
             stars = repo.get('stargazerCount', 0)
             forks = repo.get('forkCount', 0)
-            is_fork = repo.get('isFork', False)
             
-            # Add to totals
-            total_stars += stars
-            total_forks += forks
-            if not is_fork:
-                original_repos += 1
-                
-            # Track languages
-            primary_lang = repo.get('primaryLanguage', {})
-            if primary_lang and primary_lang.get('name'):
-                languages.add(primary_lang.get('name'))
-                
-            # Add all languages
-            repo_langs = repo.get('languages', {})
-            if repo_langs:
-                lang_nodes = repo_langs.get('nodes', [])
-                for lang in lang_nodes:
-                    if lang and lang.get('name'):
-                        languages.add(lang.get('name'))
-                        
-            # Store repo data
-            result['repositories'][repo_name] = {
-                'stars': stars,
-                'forks': forks,
-                'is_fork': is_fork,
-                'owner': repo.get('owner', {}).get('login') if repo.get('owner') is not None else '',
-                'primary_language': primary_lang.get('name') if primary_lang is not None else None
-            }
+            # Get collaborators
+            collaborators = repo.get('collaborators').get('totalCount', 0) if repo.get('collaborators') is not None else 0
+            collab_factor = min(1 + math.log(collaborators + 1)/2, 2.5)
+
+            # Get developer's relative commits in this repo
+            developer_commits = 0
+            contrib_repos = user_data.get('contributionsCollection', {}).get('commitContributionsByRepository', [])
+            for contrib in contrib_repos:
+                if contrib.get('repository', {}).get('name') == repo.get('name'):
+                    developer_commits = contrib.get('contributions', {}).get('totalCount', 0)
             
-            # Process release data
-            releases = repo.get('releases', {})
-            if releases:
-                release_count = releases.get('totalCount', 0)
-                release_nodes = releases.get('nodes', [])
-                
-                # Store release data
-                result['repositories'][repo_name]['releases'] = {
-                    'count': release_count,
-                    'releases': release_nodes
-                }
-        
-        # Extract pull request data
-        pr_contribs = contrib_data.get('pullRequestContributions', {}) if contrib_data is not None else {}
-        pr_nodes = pr_contribs.get('nodes', []) if pr_contribs is not None else []
-        
-        # PR metrics
-        total_prs = 0
-        merged_prs = 0
-        total_pr_files = 0
-        total_pr_additions = 0
-        total_pr_deletions = 0
-        
-        # Store PRs for analysis
-        result['pull_requests'] = []
-        
-        for pr_contrib in pr_nodes:
-            if pr_contrib is None:
-                continue
-                
-            pr = pr_contrib.get('pullRequest', {})
-            if pr is None:
-                continue
-                
-            total_prs += 1
+            total_commits = repo.get('defaultBranchRef', {}).get('target', {}).get('history', {}).get('totalCount', 0)
             
-            # Check if merged
-            if pr.get('merged', False):
-                merged_prs += 1
-                
-            # Get PR size metrics
-            files_changed = pr.get('changedFiles', 0)
-            additions = pr.get('additions', 0)
-            deletions = pr.get('deletions', 0)
+            contribution_ratio = developer_commits / total_commits if total_commits > 0 else 0
+
+            # Pull Request stats
+            merged_pull_requests = repo.get('mergedPullRequests', {}).get('totalCount', 0)
+            closed_pull_requests = repo.get('closedPullRequests', {}).get('totalCount', 0)
+            total_pull_requests = merged_pull_requests + closed_pull_requests
+            pr_acceptance = merged_pull_requests / total_pull_requests if total_pull_requests > 0 else 0.5
             
-            total_pr_files += files_changed
-            total_pr_additions += additions
-            total_pr_deletions += deletions
-            
-            # Store PR data
-            result['pull_requests'].append({
-                'title': pr.get('title', ''),
-                'merged': pr.get('merged', False),
-                'created_at': pr.get('createdAt'),
-                'merged_at': pr.get('mergedAt'),
-                'repository': pr.get('repository', {}).get('name', '') if pr.get('repository') is not None else '',
-                'files_changed': files_changed,
-                'additions': additions,
-                'deletions': deletions
-            })
+            # Review stats
+            pull_request_nodes = repo.get('pullRequests', {}).get('nodes', [])
+            review_comments = sum(
+                pr.get('reviews', {}).get('totalCount', 0) + pr.get('comments', {}).get('totalCount', 0)
+                for pr in pull_request_nodes
+            )
+
+            # Calculate technical impact
+            code_quality = (
+                0.6 * pr_acceptance +
+                0.4 * min(review_comments / 100, 1.0) 
+            )
+            repo_tech_impact = (contribution_ratio ** 0.7) * collab_factor * code_quality
+            logger.info('Prashob: repo_tech_impact: ', repo_tech_impact)
+            # Calculate ecosystem impact
+            popularity = (stars + 0.1 * forks) ** 0.5
+            repo_eco_impact = popularity * contribution_ratio
+            logger.info('Prashob: repo_eco_impact: ', repo_eco_impact)
+            normalized_repo_tech_impact = percentile_normalize(
+                repo_tech_impact,
+                *NORMALIZATION_THRESHOLDS['technical_impact']
+            )
+            logger.info('Prashob: normalized_repo_tech_impact: ', normalized_repo_tech_impact)  
+            normalized_repo_eco_impact = percentile_normalize(
+                repo_eco_impact,
+                *NORMALIZATION_THRESHOLDS['ecosystem_impact']
+            )
+            logger.info('Prashob: normalized_repo_eco_impact: ', normalized_repo_eco_impact)
+
+            repo_impact = (
+                REPO_IMPACT_WEIGHTS['technical'] * normalized_repo_tech_impact +
+                REPO_IMPACT_WEIGHTS['ecosystem'] * normalized_repo_eco_impact
+            )
+
+            repo_impacts.append(repo_impact)
+            logger.info('Prashob: repo_impact: ', repo_impact)
+        result['contributions']['repo_impact'] = np.mean(repo_impacts) if repo_impacts else 0
+
+        # Consistency calculation
+        weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
+        active_weeks = sum(1 for week in weeks if any(
+            day.get('contributionCount', 0) > 0 
+            for day in week.get('contributionDays', [])
+        ))
+        result['contributions']['consistency'] = active_weeks / len(weeks) if weeks else 0    
         
-        # Calculate PR metrics
-        result['metrics']['total_prs'] = total_prs
-        result['metrics']['merged_prs'] = merged_prs
-        result['metrics']['pr_acceptance_rate'] = merged_prs / total_prs if total_prs > 0 else 0
-        
-        # Calculate average PR size
-        if total_prs > 0:
-            result['metrics']['avg_pr_size'] = {
-                'files': total_pr_files / total_prs,
-                'additions': total_pr_additions / total_prs,
-                'deletions': total_pr_deletions / total_prs
-            }
-        else:
-            result['metrics']['avg_pr_size'] = {
-                'files': 0,
-                'additions': 0,
-                'deletions': 0
-            }
-        
-        # Extract review data
-        reviews = []
-        review_contribs = contrib_data.get('pullRequestReviewContributions', {}) if contrib_data is not None else {}
-        review_nodes = review_contribs.get('nodes', []) if review_contribs is not None else []
-        
-        for review_contrib in review_nodes:
-            if review_contrib is None:
-                continue
-                
-            review = review_contrib.get('pullRequestReview', {})
-            if review is None:
-                continue
-                
-            comments = review.get('comments', {})
-            comment_count = comments.get('totalCount', 0) if comments is not None else 0
-            
-            review_data = {
-                'state': review.get('state', ''),
-                'created_at': review.get('createdAt'),
-                'repository': review.get('repository', {}).get('name', '') if review.get('repository') is not None else '',
-                'comment_count': comment_count
-            }
-            reviews.append(review_data)
-        
-        result['reviews'] = reviews
-        
-        # Calculate review metrics
-        approved_reviews = sum(1 for r in reviews if r.get('state') == 'APPROVED')
-        total_review_comments = sum(r.get('comment_count', 0) for r in reviews)
-        
-        result['metrics']['review_approval_rate'] = approved_reviews / len(reviews) if reviews else 0
-        result['metrics']['review_comment_rate'] = total_review_comments / len(reviews) if reviews else 0
-        
-        # Extract issue data
-        issues = []
-        issue_contribs = contrib_data.get('issueContributions', {}) if contrib_data is not None else {}
-        issue_nodes = issue_contribs.get('nodes', []) if issue_contribs is not None else []
-        
-        for issue_contrib in issue_nodes:
-            if issue_contrib is None:
-                continue
-                
-            issue = issue_contrib.get('issue', {})
-            if issue is None:
-                continue
-                
-            comments = issue.get('comments', {})
-            comment_count = comments.get('totalCount', 0) if comments is not None else 0
-            
-            issue_data = {
-                'title': issue.get('title', ''),
-                'created_at': issue.get('createdAt'),
-                'state': issue.get('state', ''),
-                'repository': issue.get('repository', {}).get('name', '') if issue.get('repository') is not None else '',
-                'comment_count': comment_count
-            }
-            issues.append(issue_data)
-        
-        result['issues'] = issues
-        
-        # Calculate issue metrics
-        total_issue_comments = sum(i.get('comment_count', 0) for i in issues)
-        result['metrics']['avg_issue_comments'] = total_issue_comments / len(issues) if issues else 0
-        
-        # Calculate repository metrics
-        repo_count = len(result['repositories'])
-        if repo_count > 0:
-            # Calculate average stars and forks
-            total_stars = sum(repo.get('stars', 0) for repo in result['repositories'].values())
-            total_forks = sum(repo.get('forks', 0) for repo in result['repositories'].values())
-            
-            result['metrics']['avg_repo_stars'] = total_stars / repo_count
-            result['metrics']['avg_repo_forks'] = total_forks / repo_count
-            
-            # Calculate original vs forked repo ratio
-            original_repos = sum(1 for repo in result['repositories'].values() if not repo.get('is_fork', False))
-            result['metrics']['original_repo_rate'] = original_repos / repo_count
-            
-            # Count unique languages
-            languages = set()
-            for repo in result['repositories'].values():
-                if repo.get('primary_language'):
-                    languages.add(repo.get('primary_language'))
-            
-            result['metrics']['language_count'] = len(languages)
-            result['metrics']['languages'] = list(languages)
-        else:
-            result['metrics']['avg_repo_stars'] = 0
-            result['metrics']['avg_repo_forks'] = 0
-            result['metrics']['original_repo_rate'] = 0
-            result['metrics']['language_count'] = 0
-            result['metrics']['languages'] = []
-        
-        # Calculate release metrics
-        release_counts = []
-        release_dates = []
-        
-        for repo_data in result['repositories'].values():
-            releases = repo_data.get('releases', {})
-            if releases:
-                release_count = releases.get('count', 0)
-                release_counts.append(release_count)
-                
-                # Extract release dates for calculating frequency
-                release_list = releases.get('releases', [])
-                dates = []
-                for release in release_list:
-                    if release and release.get('createdAt'):
-                        try:
-                            date = datetime.fromisoformat(release.get('createdAt').replace('Z', '+00:00'))
-                            dates.append(date)
-                        except (ValueError, TypeError):
-                            continue
-                
-                if len(dates) >= 2:
-                    # Sort dates and calculate differences
-                    dates.sort()
-                    diffs = [(dates[i] - dates[i-1]).days for i in range(1, len(dates))]
-                    if diffs:
-                        avg_days = sum(diffs) / len(diffs)
-                        release_dates.append(avg_days)
-        
-        # Store release metrics
-        if release_counts:
-            result['metrics']['release_count'] = sum(release_counts) / len(release_counts)
-        else:
-            result['metrics']['release_count'] = 0
-            
-        if release_dates:
-            result['metrics']['avg_days_between_releases'] = sum(release_dates) / len(release_dates)
-        else:
-            result['metrics']['avg_days_between_releases'] = 90  # Default value
-        
-        result['project_impact'] = calculate_overall_project_impact(result['repositories'])
-        
+        logger.info('Prashob: result: ', result)
         return result
     except Exception as e:
         logger.error(f"Error in aggregate_user_data_graphql: {str(e)}")
@@ -766,6 +567,22 @@ def calculate_impact_score(data):
     except Exception as e:
         logger.error(f"Error calculating impact score from GraphQL data: {str(e)}")
         return 0
+
+#Prashob starts
+
+def percentile_normalize(value, lower_bound, upper_bound):
+    """
+    Normalize a value based on percentile bounds.
+    If value <= lower_bound, return 0; if value >= upper_bound, return 100.
+    Otherwise, linearly scale the value between lower_bound and upper_bound.
+    """
+    if value <= lower_bound:
+        return 0
+    if value >= upper_bound:
+        return 100
+    return ((value - lower_bound) / (upper_bound - lower_bound)) * 100
+
+#Prashob end
 
 def _calculate_impact_score_parallel(data):
     """Calculate impact score using parallel processing for large datasets"""
@@ -1003,7 +820,7 @@ def fetch_all_data(username):
                     nodes {
                       name
                     }
-                  }
+                  }  
                 }
                 contributions(first: 100) {
                   totalCount
@@ -1072,7 +889,36 @@ def fetch_all_data(username):
                 stargazerCount
                 forkCount
                 isFork
+                createdAt
                 isPrivate
+                collaborators(first: 1) {
+                  totalCount
+                }
+                mergedPullRequests: pullRequests(states: MERGED) {
+                    totalCount
+                }
+                closedPullRequests: pullRequests(states: CLOSED) {
+                    totalCount
+                }
+                pullRequests(first: 10) {
+                    totalCount
+                    nodes {
+                        reviews {
+                            totalCount
+                        }
+                        comments {
+                            totalCount
+                        }
+                    }
+                }
+                issues(first: 10) {
+                    totalCount
+                    nodes {
+                        comments {
+                            totalCount
+                        }
+                    }
+                }
                 primaryLanguage {
                   name
                 }
@@ -1081,6 +927,15 @@ def fetch_all_data(username):
                     name
                   }
                 }
+                defaultBranchRef {
+                    target {
+                        ... on Commit {
+                                history(first: 0) {
+                                    totalCount
+                                }
+                            }
+                        }
+                    }
                 owner {
                   login
                 }
@@ -1111,7 +966,7 @@ def fetch_all_data(username):
         if 'data' in graphql_response:
             return graphql_response['data']
         
-        return {'error': 'Invalid GraphQL response format.'}
+        return {'error': 'Invalid GraphQL response format.  graphql_response: ' + str(graphql_response)}
         
     except Exception as e:
         logger.error(f"Error in GraphQL data fetching: {str(e)}")

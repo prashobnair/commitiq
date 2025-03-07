@@ -35,11 +35,13 @@ def analyze_user(username):
             return jsonify({'error': aggregated_data['error']}), 500
 
         
-        impact_score = calculate_impact_score(aggregated_data)
-        logger.debug(f"Impact score calculated: {impact_score}")
+        #impact_score = calculate_impact_score(aggregated_data)
+        #impact_score_improved = calculate_impact_score_improved(aggregated_data)
+        impact_score_improved = 0
+        logger.debug(f"Impact score calculated: {impact_score_improved}")
 
         result = {
-            'impact_score': impact_score,
+            'impact_score': impact_score_improved,
             'analysis': aggregated_data
         }
         logger.debug(f"Returning result: {result}")
