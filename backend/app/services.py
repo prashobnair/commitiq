@@ -166,186 +166,8 @@ def cache_response(ttl=3600):
 MAX_STARS = 10000  # Normalization baseline for stars
 MAX_FORKS = 50000 # Example
 MAX_CONTRIBUTORS = 100  # Normalization baseline for contributors
-MAX_COMMITS = 2000
-MAX_PRS = 500
-MAX_ISSUES = 500
-MAX_REVIEWS = 500
+
 TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
-
-def calculate_commit_frequency(commits, time_window_days=TIME_WINDOW_DAYS):
-    """
-    Calculate the commit frequency as commits per day over a time window.
-    """
-    if not commits:
-        return 0
-    
-    # Extract dates from commits and sort them
-    dates = []
-    for commit in commits:
-        if isinstance(commit, dict) and 'commit' in commit:
-            try:
-                # Handle the case where commit date might be in different formats
-                commit_date = commit.get('commit', {}).get('committer', {}).get('date')
-                if commit_date:
-                    if isinstance(commit_date, str):
-                        date = datetime.strptime(commit_date, '%Y-%m-%dT%H:%M:%SZ')
-                    elif isinstance(commit_date, datetime):
-                        date = commit_date
-                    else:
-                        continue
-                    dates.append(date)
-            except Exception as e:
-                logger.error(f"Error parsing commit date: {e}, commit: {commit}")
-                continue
-    
-    if not dates:
-        return 0
-
-    # Calculate commits within the time window
-    two_years_ago = datetime.now() - timedelta(days=time_window_days)
-    commits_in_window = [date for date in dates if date >= two_years_ago]
-
-    if not commits_in_window:
-        return 0
-
-    return len(commits_in_window) / time_window_days
-
-def calculate_code_survival(commits: list) -> float:
-    """Calculate percentage of code still present in latest commit (simplified)"""
-    if not commits:
-        return 100  # Default to max if no commits
-
-    # Use sampling for large commit sets to avoid O(n²) complexity
-    if len(commits) > 100:
-        # Use either 10% of commits or 100 commits, whichever is larger
-        sample_size = max(100, len(commits) // 10)
-        # Ensure we include the most recent commits in our sample
-        recent_commits = commits[:min(20, len(commits))]
-        # Sample from the remaining commits
-        if len(commits) > 20:
-            remaining_sample = random.sample(commits[20:], min(sample_size - 20, len(commits) - 20))
-            sample_commits = recent_commits + remaining_sample
-        else:
-            sample_commits = recent_commits
-    else:
-        sample_commits = commits
-
-    total_additions = 0
-    total_deletions = 0
-
-    for commit in sample_commits:
-        stats = commit.get('stats', {})
-        total_additions += stats.get('additions', 0)
-        total_deletions += stats.get('deletions', 0)
-
-    if total_additions == 0:
-        return 0  # Handle cases where additions might be zero.
-
-    # Calculate the survival rate based on our sample
-    return ((total_additions - total_deletions) / total_additions) * 100
-
-def calculate_code_quality(commits: list) -> float:
-    """Enhanced code quality analysis"""
-    if not commits:
-        return 0
-        
-    quality_score = 0
-    for commit in commits:
-        commit_message = commit.get('commit', {}).get('message', '').lower()
-        
-        # Award points for good practices based on commit message
-        if 'test' in commit_message or 'spec' in commit_message:
-            quality_score += 5  # Test files
-        if 'fix' in commit_message or 'bug' in commit_message:
-            quality_score += 2  # Bug fixes
-        if 'refactor' in commit_message:
-            quality_score += 3  # Refactoring
-        if 'docs' in commit_message or 'documentation' in commit_message:
-            quality_score += 2  # Documentation
-        
-        # Check files if available
-        files = commit.get('files', [])
-        if files:
-            for file in files:
-                filename = file.get('filename', '').lower()
-                if filename.endswith(('.test.js', '.spec.js', '_test.py', '_spec.py', 'test_', 'spec_')):
-                    quality_score += 3  # Test files
-        
-    # Normalize the score
-    return min(quality_score / max(len(commits), 1), 100)
-
-def calculate_consistency(pulls_data, reviews_data):
-    """
-    Calculate a consistency score based on the distribution of activity over time.
-    
-    A higher score indicates more consistent activity rather than bursts.
-    Returns a value between 0 and 1.
-    """
-    # If no data, return 0 consistency
-    if not pulls_data and not reviews_data:
-        return 0
-        
-    # Collect all activity timestamps
-    timestamps = []
-    
-    # Add PR timestamps
-    for pr in pulls_data:
-        if isinstance(pr, dict):
-            created_at = pr.get('created_at')
-            if created_at:
-                try:
-                    if isinstance(created_at, str):
-                        timestamps.append(datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ'))
-                    elif isinstance(created_at, datetime):
-                        timestamps.append(created_at)
-                except (ValueError, TypeError):
-                    pass  # Skip invalid timestamps
-    
-    # Add review timestamps
-    for review in reviews_data:
-        if isinstance(review, dict):
-            submitted_at = review.get('submitted_at')
-            if submitted_at:
-                try:
-                    if isinstance(submitted_at, str):
-                        timestamps.append(datetime.strptime(submitted_at, '%Y-%m-%dT%H:%M:%SZ'))
-                    elif isinstance(submitted_at, datetime):
-                        timestamps.append(submitted_at)
-                except (ValueError, TypeError):
-                    pass  # Skip invalid timestamps
-    
-    # If no valid timestamps, return 0
-    if not timestamps:
-        return 0
-        
-    # Sort timestamps
-    timestamps.sort()
-    
-    # Calculate time differences between consecutive activities
-    time_diffs = []
-    for i in range(1, len(timestamps)):
-        diff = (timestamps[i] - timestamps[i-1]).total_seconds() / (60 * 60 * 24)  # Convert to days
-        time_diffs.append(diff)
-    
-    # If only one activity, return minimum consistency
-    if not time_diffs:
-        return 0.1  # Some minimal consistency for having at least one activity
-    
-    # Calculate coefficient of variation (lower is more consistent)
-    mean_diff = sum(time_diffs) / len(time_diffs)
-    if mean_diff == 0:
-        return 1.0  # Perfect consistency (all activities at the same time)
-        
-    variance = sum((diff - mean_diff) ** 2 for diff in time_diffs) / len(time_diffs)
-    std_dev = variance ** 0.5
-    cv = std_dev / mean_diff
-    
-    # Convert to a 0-1 score (lower CV means higher consistency)
-    # Cap CV at 3 for normalization purposes
-    capped_cv = min(cv, 3)
-    consistency_score = 1 - (capped_cv / 3)
-    
-    return consistency_score
 
 def normalize_metric(value: float, max_value: float) -> float:
     """Normalizes a metric to a 0-1 range."""
@@ -837,7 +659,6 @@ def aggregate_user_data(username, github_data):
         logger.error(f"Error in aggregate_user_data_graphql: {str(e)}")
         return {'error': f"Error aggregating user data: {str(e)}"}
 
-
 def calculate_impact_score(data):
     """Calculate the impact score based on GraphQL data
     
@@ -1045,20 +866,45 @@ def _calculate_impact_score_parallel(data):
         raise  # Re-raise to fall back to sequential processing
 
 def calculate_overall_project_impact(repos: dict) -> float:
-    """Calculate overall project impact based on individual repo impacts"""
-    # Calculate overall project impact based on individual repo impacts
+    """Calculate overall project impact using weighted average"""
+    if not repos:
+        return 0
+        
+    # Use diminishing returns for repository count
+    # First 5 repos count fully, additional repos have diminishing impact
+    effective_repo_count = min(5, len(repos)) + max(0, (len(repos) - 5) * 0.5)
+    
+    if effective_repo_count == 0:
+        return 0
+        
     total_impact = 0
+    valid_repos = 0
     
-    for repo, repo_data in repos.items():
-        
-        is_original = not repo_data['is_fork']  # check if the repo is forked
-        
-        project_impact_score = calculate_project_impact(repo_data, is_original)  # Calculate individual repo impact
+    for repo_name, repo_data in repos.items():
+        # Skip invalid data
+        if not isinstance(repo_data, dict) or 'is_fork' not in repo_data:
+            continue
+            
+        is_original = not repo_data.get('is_fork', False)
+        project_impact_score = calculate_project_impact(repo_data, is_original)
         total_impact += project_impact_score
+        valid_repos += 1
     
-    logger.info(f"Prashob:Total impact: {total_impact}"),
-    # Normalize to a 0-100 scale
-    return min(total_impact * 100, 100)
+    # Calculate average impact and scale to 100
+    if valid_repos == 0:
+        return 0
+        
+    avg_impact = total_impact / valid_repos
+    
+    # Scale average impact (typical range 0-0.7) to 0-100
+    # 0.7 is approximately the max score for a single high-quality repository
+    normalized_score = (avg_impact / 0.7) * 100
+    
+    # Apply a bonus for having multiple quality repositories
+    # This rewards both quality (high avg_impact) and quantity (multiple repos)
+    quantity_bonus = min(20, (effective_repo_count - 1) * 5)  # Up to 20% bonus
+    
+    return min(normalized_score + quantity_bonus, 100)
 
 def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
     """Calculate impact score for a single repository"""
@@ -1076,13 +922,10 @@ def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
     contributors_weight = 0.1
 
     # Normalize stars/forks
-    max_stars = 10000  # Maximum for normalization
-    max_forks = 50000  # Maximum for normalization
-    max_contributors = 100  # Maximum for normalization
 
-    normalized_stars = min(repo_data.get('stars', 0) / max_stars, 1.0)  # Cap at 1.0
-    normalized_forks = min(repo_data.get('forks', 0) / max_forks, 1.0)
-    normalized_contributors = min(repo_data.get('num_contributors', 1) / max_contributors, 1.0)
+    normalized_stars = min(repo_data.get('stars', 0) / MAX_STARS, 1.0)  # Cap at 1.0
+    normalized_forks = min(repo_data.get('forks', 0) / MAX_FORKS, 1.0)
+    normalized_contributors = min(repo_data.get('num_contributors', 1) / MAX_CONTRIBUTORS, 1.0)
 
     # Age Factor (newer repos get a boost)
     try:
@@ -1273,143 +1116,3 @@ def fetch_all_data(username):
     except Exception as e:
         logger.error(f"Error in GraphQL data fetching: {str(e)}")
         return {'error': f"Error in data fetching: {str(e)}"}
-
-# --- Batch Processing ---
-async def batch_process_users(usernames: list) -> dict:
-    """Process multiple GitHub users in batch for organizational assessments.
-    
-    This is more efficient than processing users one by one as it manages rate
-    limits better and can parallelize some operations.
-    
-    Args:
-        usernames (list): List of GitHub usernames to analyze
-        
-    Returns:
-        dict: Dictionary with username keys and analysis values
-    """
-    try:
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        
-        # Check input
-        if not usernames or not isinstance(usernames, list):
-            return {'error': 'Invalid usernames list'}
-            
-        # Deduplicate and clean usernames
-        unique_usernames = list(set(usernames))
-        
-        # Process in batches to be respectful of API limits
-        # GitHub's rate limit is typically 5000 requests per hour with a token
-        # We need to be conservative with the batch size to not hit limits
-        MAX_BATCH_SIZE = 5  # Process 5 users at a time
-        
-        results = {}
-        for i in range(0, len(unique_usernames), MAX_BATCH_SIZE):
-            batch = unique_usernames[i:i+MAX_BATCH_SIZE]
-            
-            # Create tasks for each user
-            tasks = [fetch_all_data(username) for username in batch]
-            
-            # Run tasks concurrently
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process each result
-            for username, data in zip(batch, batch_results):
-                if isinstance(data, Exception):
-                    logger.error(f"Error processing {username}: {str(data)}")
-                    results[username] = {'error': f"Error fetching data: {str(data)}"}
-                elif isinstance(data, dict) and 'error' in data:
-                    results[username] = data
-                else:
-                    # Successful data fetch, aggregate into metrics
-                    # Use ThreadPoolExecutor for CPU-bound aggregation
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(aggregate_user_data, username, data)
-                        try:
-                            user_result = future.result(timeout=60)  # Timeout after 60 seconds
-                            results[username] = user_result
-                        except Exception as e:
-                            logger.error(f"Error aggregating data for {username}: {str(e)}")
-                            results[username] = {'error': f"Error aggregating data: {str(e)}"}
-            
-            # Pause between batches if more exist to avoid rate limiting
-            if i + MAX_BATCH_SIZE < len(unique_usernames):
-                await asyncio.sleep(2)  # 2 second pause between batches
-        
-        return results
-    except ImportError:
-        logger.error("Required libraries not available for batch processing")
-        return {'error': "Required libraries not available for batch processing"}
-    except Exception as e:
-        logger.error(f"Error in batch processing: {str(e)}")
-        return {'error': f"Error in batch processing: {str(e)}"}
-
-def compare_users(usernames: list) -> dict:
-    """Compare multiple GitHub users side by side.
-    
-    Args:
-        usernames (list): List of GitHub usernames to compare
-        
-    Returns:
-        dict: Dictionary with comparison metrics
-    """
-    try:
-        import asyncio
-        
-        # Check input
-        if not usernames or not isinstance(usernames, list) or len(usernames) < 2:
-            return {'error': 'Need at least two valid usernames to compare'}
-            
-        # Get data for all users through batch processing
-        loop = asyncio.get_event_loop()
-        results = loop.run_until_complete(batch_process_users(usernames))
-        
-        # Extract key metrics for comparison
-        metrics = ['impact_score', 'repo_impact', 'code_quality', 'consistency', 
-                   'collaboration', 'community', 'security']
-                   
-        # Initialize comparison structure
-        comparison = {
-            'users': {},
-            'highest_scores': {},
-            'averages': {}
-        }
-        
-        # Extract metrics from each user's results
-        for username, data in results.items():
-            if 'error' in data:
-                comparison['users'][username] = {'error': data['error']}
-                continue
-                
-            user_metrics = {}
-            for metric in metrics:
-                user_metrics[metric] = data.get(metric, 0)
-                
-            comparison['users'][username] = user_metrics
-            
-        # Calculate highest scores and averages
-        valid_users = [u for u, d in comparison['users'].items() if 'error' not in d]
-        
-        if valid_users:
-            # Calculate highest scores
-            for metric in metrics:
-                highest_score = max([comparison['users'][u][metric] for u in valid_users])
-                highest_scorers = [u for u in valid_users if comparison['users'][u][metric] == highest_score]
-                
-                comparison['highest_scores'][metric] = {
-                    'score': highest_score,
-                    'users': highest_scorers
-                }
-                
-            # Calculate averages
-            for metric in metrics:
-                avg_score = sum([comparison['users'][u][metric] for u in valid_users]) / len(valid_users)
-                comparison['averages'][metric] = avg_score
-                
-        return comparison
-    except ImportError:
-        logger.error("Required libraries not available for user comparison")
-        return {'error': "Required libraries not available for user comparison"}
-    except Exception as e:
-        logger.error(f"Error in user comparison: {str(e)}")
-        return {'error': f"Error in user comparison: {str(e)}"}
