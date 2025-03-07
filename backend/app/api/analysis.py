@@ -1,9 +1,7 @@
 # backend/app/api/analysis.py
 from flask import Blueprint, jsonify
-from ..services import aggregate_user_data, calculate_impact_score_graphql, calculate_overall_project_impact, fetch_all_data
+from ..services import aggregate_user_data, calculate_impact_score, fetch_all_data
 import logging
-import asyncio
-import time
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -12,20 +10,19 @@ analysis_bp = Blueprint('analysis', __name__)
 
 @analysis_bp.route('/analyze/<username>', methods=['GET'])
 def analyze_user(username):
-    logger.info(f"TEST: Analyzing user: {username} at {time.time()}")  # Log with timestamp
-    logger.debug(f"Analyzing user: {username}")  # Log entry point
+    logger.info(f"Analyzing user: {username}")  # Log entry point
     try:
-        # Use asyncio.run to call the async function from synchronous code
-        async_data = asyncio.run(fetch_all_data(username))
-        logger.debug(f"Async data fetched: {async_data}")
         
-        # Check for errors in async_data
-        if 'error' in async_data:
-            logger.error(f"Error during async data fetching: {async_data['error']}")
-            return jsonify({'error': async_data['error']}), 500
+        github_data = fetch_all_data(username)
+        logger.debug(f"Github data fetched: {github_data}")
+        
+        # Check for errors in github_data
+        if 'error' in github_data:
+            logger.error(f"Error during github data fetching: {github_data['error']}")
+            return jsonify({'error': github_data['error']}), 500
             
-        # Process the async data using aggregate_user_data
-        aggregated_data = aggregate_user_data(username, async_data)
+        # Process the github data using aggregate_user_data
+        aggregated_data = aggregate_user_data(username, github_data)
         logger.debug(f"Aggregated data: {aggregated_data}")
 
         # Check for errors returned by aggregate_user_data
@@ -37,9 +34,8 @@ def analyze_user(username):
             logger.error(f"Error during aggregation: {aggregated_data['error']}")
             return jsonify({'error': aggregated_data['error']}), 500
 
-        aggregated_data['project_impact'] = calculate_overall_project_impact(aggregated_data)
-        logger.debug(f"Project impact calculated: {aggregated_data['project_impact']}")
-        impact_score = calculate_impact_score_graphql(aggregated_data)
+        
+        impact_score = calculate_impact_score(aggregated_data)
         logger.debug(f"Impact score calculated: {impact_score}")
 
         result = {
