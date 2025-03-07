@@ -15,9 +15,8 @@ async-timeout==4.0.3
 asgiref==3.7.2
 hypercorn==0.14.4
 
-# Testing
-pytest==7.3.1
-pytest-cov==4.1.0
+# Math
+numpy==2.0.2
 
 # Logging
 python-json-logger==2.0.7
