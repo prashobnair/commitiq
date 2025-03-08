@@ -1,6 +1,6 @@
 # backend/app/api/analysis.py
 from flask import Blueprint, jsonify
-from ..services import aggregate_user_data, calculate_impact_score, fetch_all_data
+from ..services import aggregate_user_data, fetch_all_data, calculate_impact_score
 import logging
 
 # Get module logger
@@ -36,6 +36,8 @@ def analyze_user(username):
 
         
         impact_score = calculate_impact_score(aggregated_data)
+        
+        
         logger.debug(f"Impact score calculated: {impact_score}")
 
         result = {
