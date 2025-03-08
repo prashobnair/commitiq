@@ -94,21 +94,54 @@ def get_cache_instance():
 # --- Constants ---
 TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
 
+# Normalization thresholds (min, max) for percentile-based normalization
 NORMALIZATION_THRESHOLDS = {
     'pulls': (5, 100),
     'commits': (10, 250),
     'reviews': (5, 100),
     'issues': (2, 50),
-    'repo_impact': (10, 100),
+    'repos_impact': (10, 100),
     'consistency': (10, 35),
     'technical_impact': (0.1, 4.0),
     'ecosystem_impact': (0, 500)
 }
 
+# Weights for repository impact calculation
 REPO_IMPACT_WEIGHTS = {
     'technical': 0.7,
     'ecosystem': 0.3
 }
+
+# Weights for technical impact sub-components
+TECHNICAL_IMPACT_WEIGHTS = {
+    'pr_acceptance': 0.6,
+    'review_activity': 0.4
+}
+
+# Weights for final impact score components
+IMPACT_SCORE_WEIGHTS = {
+    'pulls': 0.27,
+    'commits': 0.225,
+    'reviews': 0.135,
+    'issues': 0.09,
+    'repos_impact': 0.18,
+    'consistency': 0.10
+}
+
+# Collaboration factor calculation constants
+COLLAB_FACTOR = {
+    'base': 1.0,
+    'log_factor': 0.5,
+    'max_value': 2.5
+}
+
+# Review activity normalization
+REVIEW_ACTIVITY = {
+    'normalization_factor': 100.0  # Normalize review comments per 100
+}
+
+# Contribution ratio exponent (diminishing returns for higher contribution percentages)
+CONTRIBUTION_RATIO_EXPONENT = 0.7
 
 # Caching decorator
 def cache_response(ttl=3600):
@@ -178,13 +211,6 @@ def cache_response(ttl=3600):
     
     return decorator
 
-
-def normalize_metric(value: float, max_value: float) -> float:
-    """Normalizes a metric to a 0-1 range."""
-    if value is None:
-        return 0
-    return min(value / max_value, 1.0)
-
 class GitHubGraphQL:
     """GraphQL client for GitHub API"""
     
@@ -245,9 +271,10 @@ class GitHubGraphQL:
                 return token
     
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((requests.exceptions.Timeout, requests.exceptions.ConnectionError, RequestException))
+        stop=stop_after_attempt(3),  # Increase to 3
+        wait=wait_exponential(multiplier=1, min=2, max=10),  # conservative backoff
+        retry=retry_if_exception_type((requests.exceptions.Timeout, requests.exceptions.ConnectionError, RequestException)),
+        reraise=False  # Don't reraise the exception after all retries
     )
     def execute_query(self, query, variables=None):
         """Execute a GraphQL query with proper rate limit handling"""
@@ -290,10 +317,10 @@ class GitHubGraphQL:
             
             # Check for other error status codes
             if response.status_code != 200:
-                if response.status_code == 502:
-                    logger.warning("GitHub gateway timeout (502) - triggering retry")
-                    # Explicitly raise RequestException to trigger retry
-                    raise RequestException("502 Bad Gateway")
+                if response.status_code >= 500:
+                    # Any server error should trigger a retry
+                    logger.warning(f"GitHub server error ({response.status_code}) - triggering retry")
+                    raise RequestException(f"Server error: {response.status_code}")
                 else:
                     logger.error(f"GraphQL request failed with status code {response.status_code}: {response.text}")
                     return {'errors': [{'message': f"GraphQL request failed with status code {response.status_code}"}]}
@@ -358,7 +385,7 @@ def aggregate_user_data(username, github_data):
                 'commits': 0,
                 'issues': 0,
                 'reviews': 0,
-                'repo_impact': 0,
+                'repos_impact': 0,
                 'consistency': 0
             },
             'raw_data': github_data
@@ -396,7 +423,8 @@ def aggregate_user_data(username, github_data):
             
             # Get collaborators
             collaborators = repo.get('collaborators').get('totalCount', 0) if repo.get('collaborators') is not None else 0
-            collab_factor = min(1 + math.log(collaborators + 1)/2, 2.5)
+            collab_factor = min(COLLAB_FACTOR['base'] + math.log(collaborators + 1) * COLLAB_FACTOR['log_factor'], 
+                               COLLAB_FACTOR['max_value'])
             
             # Get developer's relative commits in this repo
             developer_commits = 0
@@ -424,35 +452,23 @@ def aggregate_user_data(username, github_data):
             
             # Calculate technical impact
             code_quality = (
-                0.6 * pr_acceptance +
-                0.4 * min(review_comments / 100, 1.0) 
+                TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'] * pr_acceptance +
+                TECHNICAL_IMPACT_WEIGHTS['review_activity'] * min(review_comments / REVIEW_ACTIVITY['normalization_factor'], 1.0) 
             )
-            repo_tech_impact = (contribution_ratio ** 0.7) * collab_factor * code_quality
-            
+            repo_tech_impact = (contribution_ratio ** CONTRIBUTION_RATIO_EXPONENT) * collab_factor * code_quality
             
             # Calculate ecosystem impact
             popularity = (stars + 0.1 * forks) ** 0.5
             repo_eco_impact = popularity * contribution_ratio
             
-            normalized_repo_tech_impact = percentile_normalize(
-                repo_tech_impact,
-                *NORMALIZATION_THRESHOLDS['technical_impact']
-            )
-            
-            normalized_repo_eco_impact = percentile_normalize(
-                repo_eco_impact,
-                *NORMALIZATION_THRESHOLDS['ecosystem_impact']
-            )
-            
-
             repo_impact = (
-                REPO_IMPACT_WEIGHTS['technical'] * normalized_repo_tech_impact +
-                REPO_IMPACT_WEIGHTS['ecosystem'] * normalized_repo_eco_impact
+                REPO_IMPACT_WEIGHTS['technical'] * repo_tech_impact +
+                REPO_IMPACT_WEIGHTS['ecosystem'] * repo_eco_impact
             )
 
             repo_impacts.append(repo_impact)
             
-        result['contributions']['repo_impact'] = np.mean(repo_impacts) if repo_impacts else 0
+        result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
 
         # Consistency calculation
         weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
@@ -577,8 +593,14 @@ def fetch_all_data(username):
             }
         
         graphql = GitHubGraphQL()  # Instantiate the GraphQL client
-        graphql_response = graphql.execute_query(query, variables) 
-
+        
+        try:
+            graphql_response = graphql.execute_query(query, variables)
+        except Exception as e:
+            # Handle the case where all retries are exhausted
+            logger.error(f"All retry attempts failed for GitHub API: {str(e)}")
+            return {'error': f"GitHub API is currently unavailable. Please try again later."}
+        
         if 'data' in graphql_response:
             return graphql_response['data']
         
@@ -587,3 +609,47 @@ def fetch_all_data(username):
     except Exception as e:
         logger.error(f"Error in GraphQL data fetching: {str(e)}")
         return {'error': f"Error in data fetching: {str(e)}"}
+    
+def calculate_impact_score(data):
+    """Calculate final impact score using percentile-based normalization"""
+    try:
+        contributions = data.get('contributions', {})
+        
+        # Normalize metrics
+        pulls = percentile_normalize(
+            contributions.get('pulls', 0),
+            *NORMALIZATION_THRESHOLDS['pulls']
+        )
+        commits = percentile_normalize(
+            contributions.get('commits', 0),
+            *NORMALIZATION_THRESHOLDS['commits']
+        )
+        reviews = percentile_normalize(
+            contributions.get('reviews', 0),
+            *NORMALIZATION_THRESHOLDS['reviews']
+        )
+        issues = percentile_normalize(
+            contributions.get('issues', 0),
+            *NORMALIZATION_THRESHOLDS['issues']
+        )
+        repos_impact = percentile_normalize(
+            contributions.get('repos_impact', 0),
+            *NORMALIZATION_THRESHOLDS['repos_impact']
+        )
+        consistency = contributions.get('consistency', 0) * 100
+
+        # Weighted sum using defined weights
+        impact_score = (
+            IMPACT_SCORE_WEIGHTS['pulls'] * pulls +
+            IMPACT_SCORE_WEIGHTS['commits'] * commits +
+            IMPACT_SCORE_WEIGHTS['reviews'] * reviews +
+            IMPACT_SCORE_WEIGHTS['issues'] * issues +
+            IMPACT_SCORE_WEIGHTS['repos_impact'] * repos_impact +
+            IMPACT_SCORE_WEIGHTS['consistency'] * consistency
+        )
+
+        return min(max(impact_score, 0), 100)
+
+    except Exception as e:
+        logger.error(f"Scoring error: {str(e)}")
+        return 0
