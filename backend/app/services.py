@@ -501,6 +501,8 @@ def fetch_all_data(username):
         # Calculate the date for the time window
         since_date = (datetime.now() - timedelta(days=TIME_WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
+        graphql = GitHubGraphQL()  # Instantiate the GraphQL client
+        
         # Define the GraphQL query
         query = """
         query ($login: String!, $since: DateTime!) {
@@ -528,7 +530,7 @@ def fetch_all_data(username):
                   }
                 }
               }
-              commitContributionsByRepository(maxRepositories: 100) {
+              commitContributionsByRepository(maxRepositories: 50) {
                 repository {
                   name
                 }
@@ -537,7 +539,7 @@ def fetch_all_data(username):
                 }
               }
             }
-            repositories(first: 100, orderBy: {field: STARGAZERS, direction: DESC}) {
+            repositories(first: 50, orderBy: {field: STARGAZERS, direction: DESC}) {
               totalCount
               nodes {
                 name
@@ -591,9 +593,7 @@ def fetch_all_data(username):
                 "login": username,
                 "since": since_date
             }
-        
-        graphql = GitHubGraphQL()  # Instantiate the GraphQL client
-        
+
         try:
             graphql_response = graphql.execute_query(query, variables)
         except Exception as e:
