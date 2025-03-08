@@ -4,7 +4,7 @@ import os
 from flask import jsonify
 import time
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects, RequestException
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type, wait_exponential
 import logging
 from functools import lru_cache, wraps
 import json
@@ -91,7 +91,9 @@ def get_cache_instance():
     
     return MemoryCache()
 
-# Define constants
+# --- Constants ---
+TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
+
 NORMALIZATION_THRESHOLDS = {
     'pulls': (5, 100),
     'commits': (10, 250),
@@ -176,13 +178,6 @@ def cache_response(ttl=3600):
     
     return decorator
 
-# --- Constants ---
-#Prashob: @todo Need to review these constans
-MAX_STARS = 10000  # Normalization baseline for stars
-MAX_FORKS = 50000 # Example
-MAX_CONTRIBUTORS = 100  # Normalization baseline for contributors
-
-TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better performance
 
 def normalize_metric(value: float, max_value: float) -> float:
     """Normalizes a metric to a 0-1 range."""
@@ -210,6 +205,7 @@ class GitHubGraphQL:
         
         # GraphQL endpoint
         self.endpoint = 'https://api.github.com/graphql'
+        self.timeout = 25  # Keep under GitHub's 30s timeout threshold
     
     def get_token(self):
         """Get the next available token using round-robin rotation"""
@@ -248,6 +244,11 @@ class GitHubGraphQL:
                     
                 return token
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((requests.exceptions.Timeout, requests.exceptions.ConnectionError, RequestException))
+    )
     def execute_query(self, query, variables=None):
         """Execute a GraphQL query with proper rate limit handling"""
         token = self.get_token()
@@ -263,7 +264,7 @@ class GitHubGraphQL:
                 self.endpoint,
                 json={'query': query, 'variables': variables or {}},
                 headers=headers,
-                timeout=30
+                timeout=self.timeout
             )
             self.last_call = time.time()
             
@@ -289,8 +290,13 @@ class GitHubGraphQL:
             
             # Check for other error status codes
             if response.status_code != 200:
-                logger.error(f"GraphQL request failed with status code {response.status_code}: {response.text}")
-                return {'errors': [{'message': f"GraphQL request failed with status code {response.status_code}"}]}
+                if response.status_code == 502:
+                    logger.warning("GitHub gateway timeout (502) - triggering retry")
+                    # Explicitly raise RequestException to trigger retry
+                    raise RequestException("502 Bad Gateway")
+                else:
+                    logger.error(f"GraphQL request failed with status code {response.status_code}: {response.text}")
+                    return {'errors': [{'message': f"GraphQL request failed with status code {response.status_code}"}]}
             
             # Parse the JSON response
             try:
@@ -301,7 +307,8 @@ class GitHubGraphQL:
                 
         except requests.RequestException as e:
             logger.error(f"GraphQL request error: {str(e)}")
-            return {'errors': [{'message': f"GraphQL request error: {str(e)}"}]}
+            # Re-raise to trigger retry decorator
+            raise
         except Exception as e:
             logger.error(f"Unexpected error in GraphQL request: {str(e)}")
             return {'errors': [{'message': f"Unexpected error: {str(e)}"}]}
@@ -378,7 +385,7 @@ def aggregate_user_data(username, github_data):
         # Get weighted repository metrics
         repos = user_data.get('repositories', {}).get('nodes', [])
         repo_impacts = []
-
+        
         for repo in repos:
             if repo.get('isPrivate', False):
                 continue
@@ -390,7 +397,7 @@ def aggregate_user_data(username, github_data):
             # Get collaborators
             collaborators = repo.get('collaborators').get('totalCount', 0) if repo.get('collaborators') is not None else 0
             collab_factor = min(1 + math.log(collaborators + 1)/2, 2.5)
-
+            
             # Get developer's relative commits in this repo
             developer_commits = 0
             contrib_repos = user_data.get('contributionsCollection', {}).get('commitContributionsByRepository', [])
@@ -398,10 +405,10 @@ def aggregate_user_data(username, github_data):
                 if contrib.get('repository', {}).get('name') == repo.get('name'):
                     developer_commits = contrib.get('contributions', {}).get('totalCount', 0)
             
-            total_commits = repo.get('defaultBranchRef', {}).get('target', {}).get('history', {}).get('totalCount', 0)
+            total_commits = repo.get('defaultBranchRef', {}).get('target', {}).get('history', {}).get('totalCount', 0) if repo.get('defaultBranchRef', {}) is not None else 0
             
             contribution_ratio = developer_commits / total_commits if total_commits > 0 else 0
-
+            
             # Pull Request stats
             merged_pull_requests = repo.get('mergedPullRequests', {}).get('totalCount', 0)
             closed_pull_requests = repo.get('closedPullRequests', {}).get('totalCount', 0)
@@ -414,28 +421,29 @@ def aggregate_user_data(username, github_data):
                 pr.get('reviews', {}).get('totalCount', 0) + pr.get('comments', {}).get('totalCount', 0)
                 for pr in pull_request_nodes
             )
-
+            
             # Calculate technical impact
             code_quality = (
                 0.6 * pr_acceptance +
                 0.4 * min(review_comments / 100, 1.0) 
             )
             repo_tech_impact = (contribution_ratio ** 0.7) * collab_factor * code_quality
-            logger.info('Prashob: repo_tech_impact: ', repo_tech_impact)
+            
+            
             # Calculate ecosystem impact
             popularity = (stars + 0.1 * forks) ** 0.5
             repo_eco_impact = popularity * contribution_ratio
-            logger.info('Prashob: repo_eco_impact: ', repo_eco_impact)
+            
             normalized_repo_tech_impact = percentile_normalize(
                 repo_tech_impact,
                 *NORMALIZATION_THRESHOLDS['technical_impact']
             )
-            logger.info('Prashob: normalized_repo_tech_impact: ', normalized_repo_tech_impact)  
+            
             normalized_repo_eco_impact = percentile_normalize(
                 repo_eco_impact,
                 *NORMALIZATION_THRESHOLDS['ecosystem_impact']
             )
-            logger.info('Prashob: normalized_repo_eco_impact: ', normalized_repo_eco_impact)
+            
 
             repo_impact = (
                 REPO_IMPACT_WEIGHTS['technical'] * normalized_repo_tech_impact +
@@ -443,7 +451,7 @@ def aggregate_user_data(username, github_data):
             )
 
             repo_impacts.append(repo_impact)
-            logger.info('Prashob: repo_impact: ', repo_impact)
+            
         result['contributions']['repo_impact'] = np.mean(repo_impacts) if repo_impacts else 0
 
         # Consistency calculation
@@ -454,121 +462,10 @@ def aggregate_user_data(username, github_data):
         ))
         result['contributions']['consistency'] = active_weeks / len(weeks) if weeks else 0    
         
-        logger.info('Prashob: result: ', result)
         return result
     except Exception as e:
         logger.error(f"Error in aggregate_user_data_graphql: {str(e)}")
         return {'error': f"Error aggregating user data: {str(e)}"}
-
-def calculate_impact_score(data):
-    """Calculate the impact score based on GraphQL data
-    
-    This optimized version uses parallel processing for large datasets.
-    """
-    try:
-        # Extract key metrics from the data
-        metrics = data.get('metrics', {})
-        
-        # Determine if the dataset is large enough to benefit from parallelization
-        repos = data.get('repositories', {})
-        pull_requests = data.get('pull_requests', [])
-        reviews = data.get('reviews', [])
-        
-        is_large_dataset = (
-            len(repos) > 10 or 
-            len(pull_requests) > 50 or 
-            len(reviews) > 50
-        )
-        
-        # Use parallel processing for large datasets
-        if is_large_dataset:
-            try:
-                return _calculate_impact_score_parallel(data)
-            except Exception as e:
-                logger.warning(f"Parallel processing failed, falling back to sequential: {str(e)}")
-                # Fall back to sequential processing
-        
-        # Weight factors for different metrics
-        weights = {
-            'repo_impact': 0.20,      # Impact of repositories (stars, forks)
-            'code_quality': 0.15,     # Code quality metrics
-            'consistency': 0.15,      # Consistency of contributions
-            'collaboration': 0.20,    # Collaboration metrics (PRs, reviews)
-            'community': 0.15,        # Community engagement 
-            'releases': 0.10,         # Release management
-            'security': 0.05          # Security consciousness
-        }
-        
-        # 1. Repository Impact Score (stars, forks, variety of repos)
-        repo_impact = 0
-        if 'avg_repo_stars' in metrics:
-            repo_impact += normalize_metric(metrics.get('avg_repo_stars', 0), 500) * 0.5
-        if 'original_repo_rate' in metrics:
-            repo_impact += metrics.get('original_repo_rate', 0) * 0.3
-        if 'language_count' in metrics:
-            repo_impact += normalize_metric(metrics.get('language_count', 0), 10) * 0.2
-            
-        # 2. Code Quality Score
-        code_quality = 0
-        if 'avg_pr_size' in metrics:
-            avg_files_changed = metrics.get('avg_pr_size', {}).get('files', 0)
-            # Smaller PRs are generally better (up to a point)
-            code_quality += (1 - normalize_metric(min(avg_files_changed, 30), 30)) * 0.5
-        if 'pr_acceptance_rate' in metrics:
-            code_quality += metrics.get('pr_acceptance_rate', 0) * 0.5
-            
-        # 3. Consistency Score
-        consistency = metrics.get('consistency', 0)
-        
-        # 4. Collaboration Score
-        collaboration = 0
-        if 'review_comment_rate' in metrics:
-            collaboration += metrics.get('review_comment_rate', 0) * 0.5
-        if 'review_approval_rate' in metrics:
-            collaboration += metrics.get('review_approval_rate', 0) * 0.5
-            
-        # 5. Community Score
-        community = 0
-        
-        # Add in followers contribution
-        followers = data.get('followers', 0)
-        community += normalize_metric(followers, 1000) * 1.0
-        
-        # 6. Release Management
-        release_score = 0
-        if 'release_count' in metrics:
-            release_score += normalize_metric(metrics.get('release_count', 0), 20) * 0.5
-        if 'avg_days_between_releases' in metrics:
-            # Lower is better, but not too low
-            avg_days = metrics.get('avg_days_between_releases', 90)
-            ideal_days = 14  # Assuming bi-weekly releases are ideal
-            release_frequency_score = 1 - abs(avg_days - ideal_days) / 100
-            release_frequency_score = max(0, min(1, release_frequency_score))
-            release_score += release_frequency_score * 0.5
-        
-        # 7. Security Score
-        security_score = 0
-        # Default to a moderate security score since we removed the security advisories functionality
-        security_score = 0.5
-            
-        # Calculate the overall impact score (weighted average)
-        impact_score = (
-            weights['repo_impact'] * repo_impact +
-            weights['code_quality'] * code_quality +
-            weights['consistency'] * consistency +
-            weights['collaboration'] * collaboration +
-            weights['community'] * community +
-            weights['releases'] * release_score +
-            weights['security'] * security_score
-        )
-        
-        # Scale to 0-100 range
-        return impact_score * 100
-    except Exception as e:
-        logger.error(f"Error calculating impact score from GraphQL data: {str(e)}")
-        return 0
-
-#Prashob starts
 
 def percentile_normalize(value, lower_bound, upper_bound):
     """
@@ -581,192 +478,6 @@ def percentile_normalize(value, lower_bound, upper_bound):
     if value >= upper_bound:
         return 100
     return ((value - lower_bound) / (upper_bound - lower_bound)) * 100
-
-#Prashob end
-
-def _calculate_impact_score_parallel(data):
-    """Calculate impact score using parallel processing for large datasets"""
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-        
-        # Extract key metrics from the data
-        metrics = data.get('metrics', {})
-        
-        # Weight factors for different metrics
-        weights = {
-            'repo_impact': 0.20,      # Impact of repositories (stars, forks)
-            'code_quality': 0.15,     # Code quality metrics
-            'consistency': 0.15,      # Consistency of contributions
-            'collaboration': 0.20,    # Collaboration metrics (PRs, reviews)
-            'community': 0.15,        # Community engagement 
-            'releases': 0.10,         # Release management
-            'security': 0.05          # Security consciousness
-        }
-        
-        def calc_repo_impact(metrics):
-            repo_impact = 0
-            if 'avg_repo_stars' in metrics:
-                repo_impact += normalize_metric(metrics.get('avg_repo_stars', 0), 500) * 0.5
-            if 'original_repo_rate' in metrics:
-                repo_impact += metrics.get('original_repo_rate', 0) * 0.3
-            if 'language_count' in metrics:
-                repo_impact += normalize_metric(metrics.get('language_count', 0), 10) * 0.2
-            return repo_impact
-        
-        def calc_code_quality(metrics):
-            code_quality = 0
-            if 'avg_pr_size' in metrics:
-                avg_files_changed = metrics.get('avg_pr_size', {}).get('files', 0)
-                code_quality += (1 - normalize_metric(min(avg_files_changed, 30), 30)) * 0.5
-            if 'pr_acceptance_rate' in metrics:
-                code_quality += metrics.get('pr_acceptance_rate', 0) * 0.5
-            return code_quality
-        
-        def calc_collaboration(metrics):
-            collaboration = 0
-            if 'review_comment_rate' in metrics:
-                collaboration += metrics.get('review_comment_rate', 0) * 0.5
-            if 'review_approval_rate' in metrics:
-                collaboration += metrics.get('review_approval_rate', 0) * 0.5
-            return collaboration
-        
-        def calc_community(metrics, followers):
-            community = 0
-            community += normalize_metric(followers, 1000) * 1.0
-            return community
-        
-        def calc_release_score(metrics):
-            release_score = 0
-            if 'release_count' in metrics:
-                release_score += normalize_metric(metrics.get('release_count', 0), 20) * 0.5
-            if 'avg_days_between_releases' in metrics:
-                avg_days = metrics.get('avg_days_between_releases', 90)
-                ideal_days = 14
-                release_frequency_score = 1 - abs(avg_days - ideal_days) / 100
-                release_frequency_score = max(0, min(1, release_frequency_score))
-                release_score += release_frequency_score * 0.5
-            return release_score
-        
-        def calc_security_score(metrics):
-            security_score = 0
-            # Default to a moderate security score since we removed the security advisories functionality
-            return 0.5
-        
-        # Define tasks to run in parallel
-        tasks = [
-            (calc_repo_impact, (metrics,)),
-            (calc_code_quality, (metrics,)),
-            (lambda m: m.get('consistency', 0), (metrics,)),  # Consistency score is direct
-            (calc_collaboration, (metrics,)),
-            (calc_community, (metrics, data.get('followers', 0))),
-            (calc_release_score, (metrics,)),
-            (calc_security_score, (metrics,))
-        ]
-        
-        # Execute tasks in parallel
-        with ThreadPoolExecutor(max_workers=min(7, os.cpu_count() or 4)) as executor:
-            futures = [
-                executor.submit(func, *args) 
-                for func, args in tasks
-            ]
-            
-            # Collect results and apply weights
-            result = sum(
-                future.result() * weight 
-                for future, weight in zip(futures, weights)
-            )
-        
-        # Scale to 0-100 range
-        return result * 100
-    except Exception as e:
-        logger.error(f"Error in parallel impact score calculation: {str(e)}")
-        raise  # Re-raise to fall back to sequential processing
-
-def calculate_overall_project_impact(repos: dict) -> float:
-    """Calculate overall project impact using weighted average"""
-    if not repos:
-        return 0
-        
-    # Use diminishing returns for repository count
-    # First 5 repos count fully, additional repos have diminishing impact
-    effective_repo_count = min(5, len(repos)) + max(0, (len(repos) - 5) * 0.5)
-    
-    if effective_repo_count == 0:
-        return 0
-        
-    total_impact = 0
-    valid_repos = 0
-    
-    for repo_name, repo_data in repos.items():
-        # Skip invalid data
-        if not isinstance(repo_data, dict) or 'is_fork' not in repo_data:
-            continue
-            
-        is_original = not repo_data.get('is_fork', False)
-        project_impact_score = calculate_project_impact(repo_data, is_original)
-        total_impact += project_impact_score
-        valid_repos += 1
-    
-    # Calculate average impact and scale to 100
-    if valid_repos == 0:
-        return 0
-        
-    avg_impact = total_impact / valid_repos
-    
-    # Scale average impact (typical range 0-0.7) to 0-100
-    # 0.7 is approximately the max score for a single high-quality repository
-    normalized_score = (avg_impact / 0.7) * 100
-    
-    # Apply a bonus for having multiple quality repositories
-    # This rewards both quality (high avg_impact) and quantity (multiple repos)
-    quantity_bonus = min(20, (effective_repo_count - 1) * 5)  # Up to 20% bonus
-    
-    return min(normalized_score + quantity_bonus, 100)
-
-def calculate_project_impact(repo_data: dict, is_original: bool) -> float:
-    """Calculate impact score for a single repository"""
-    if not isinstance(repo_data, dict):
-        return 0
-        
-    # Higher weight for original repos vs forks
-    if is_original:
-        originality_weight = 0.7  # High weight for original repos
-    else:
-        originality_weight = 0.1  # Low weight for forked repos
-
-    stars_weight = 0.15
-    forks_weight = 0.05  # Significantly reduced
-    contributors_weight = 0.1
-
-    # Normalize stars/forks
-
-    normalized_stars = min(repo_data.get('stars', 0) / MAX_STARS, 1.0)  # Cap at 1.0
-    normalized_forks = min(repo_data.get('forks', 0) / MAX_FORKS, 1.0)
-    normalized_contributors = min(repo_data.get('num_contributors', 1) / MAX_CONTRIBUTORS, 1.0)
-
-    # Age Factor (newer repos get a boost)
-    try:
-        created_at = repo_data.get('created_at')
-        if created_at:
-            repo_created_at = datetime.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ')
-            repo_age_years = (datetime.now() - repo_created_at).days / 365.25
-            age_factor = 1 / (1 + repo_age_years)  # Example: 1-year-old repo -> factor of 0.5
-        else:
-            age_factor = 0.5  # Default if created_at is missing
-    except (ValueError, TypeError):
-        age_factor = 0.5  # Default if there's an error parsing the date
-
-    # Combine factors
-    project_impact_score = (
-        originality_weight +
-        (1-originality_weight) * (
-            stars_weight * normalized_stars +
-            forks_weight * normalized_forks +
-            contributors_weight * normalized_contributors
-        )
-    ) * age_factor
-    
-    return project_impact_score
 
 def fetch_all_data(username):
     """Fetch all GitHub data for a user asynchronously using GraphQL."""
@@ -795,10 +506,8 @@ def fetch_all_data(username):
               totalPullRequestReviewContributions
               totalIssueContributions
               contributionCalendar {
-                totalContributions
                 weeks {
                   contributionDays {
-                    date
                     contributionCount
                   }
                 }
@@ -806,79 +515,9 @@ def fetch_all_data(username):
               commitContributionsByRepository(maxRepositories: 100) {
                 repository {
                   name
-                  owner {
-                    login
-                  }
-                  stargazerCount
-                  forkCount
-                  isPrivate
-                  isFork
-                  primaryLanguage {
-                    name
-                  }
-                  languages(first: 10) {
-                    nodes {
-                      name
-                    }
-                  }  
                 }
                 contributions(first: 100) {
                   totalCount
-                  nodes {
-                    commitCount
-                    repository {
-                      name
-                    }
-                    occurredAt
-                  }
-                }
-              }
-              pullRequestContributions(first: 100) {
-                totalCount
-                nodes {
-                  pullRequest {
-                    title
-                    merged
-                    mergedAt
-                    createdAt
-                    repository {
-                      name
-                    }
-                    changedFiles
-                    additions
-                    deletions
-                  }
-                }
-              }
-              pullRequestReviewContributions(first: 100) {
-                totalCount
-                nodes {
-                  pullRequestReview {
-                    repository {
-                      name
-                    }
-                    createdAt
-                    state
-                    comments {
-                      totalCount
-                    }
-                  }
-                }
-              }
-              issueContributions(first: 100) {
-                totalCount
-                nodes {
-                  issue {
-                    title
-                    createdAt
-                    repository {
-                      name
-                    }
-                    state
-                    comments {
-                      totalCount
-                    }
-                  }
                 }
               }
             }
@@ -888,8 +527,6 @@ def fetch_all_data(username):
                 name
                 stargazerCount
                 forkCount
-                isFork
-                createdAt
                 isPrivate
                 collaborators(first: 1) {
                   totalCount
@@ -911,14 +548,6 @@ def fetch_all_data(username):
                         }
                     }
                 }
-                issues(first: 10) {
-                    totalCount
-                    nodes {
-                        comments {
-                            totalCount
-                        }
-                    }
-                }
                 primaryLanguage {
                   name
                 }
@@ -930,24 +559,11 @@ def fetch_all_data(username):
                 defaultBranchRef {
                     target {
                         ... on Commit {
-                                history(first: 0) {
-                                    totalCount
-                                }
+                            history(first: 0) {
+                                totalCount
                             }
                         }
                     }
-                owner {
-                  login
-                }
-                releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) {
-                  totalCount
-                  nodes {
-                    name
-                    createdAt
-                    tagName
-                    isPrerelease
-                    isDraft
-                  }
                 }
               }
             }

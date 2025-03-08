@@ -1,6 +1,6 @@
 # backend/app/api/analysis.py
 from flask import Blueprint, jsonify
-from ..services import aggregate_user_data, calculate_impact_score, fetch_all_data
+from ..services import aggregate_user_data, fetch_all_data
 import logging
 
 # Get module logger
