@@ -21,6 +21,13 @@ import random
 # Add the parent directory to the path to import from backend
 sys.path.append(str(Path(__file__).parent.parent))
 from backend.app.services import aggregate_user_data, calculate_impact_score, GitHubGraphQL, fetch_all_data
+from db_utils import (
+    sqlite_connection, postgres_connection, 
+    get_existing_users_sqlite, get_existing_users_postgres,
+    sample_users_sqlite, sample_users_postgres,
+    DEFAULT_PG_HOST, DEFAULT_PG_PORT, DEFAULT_PG_USER, 
+    DEFAULT_PG_PASSWORD, DEFAULT_PG_DB
+)
 
 # Configure logging
 logging.basicConfig(
@@ -48,30 +55,47 @@ def parse_args():
                         help=f'Number of users to process (default: {BATCH_SIZE})')
     parser.add_argument('--workers', type=int, default=MAX_WORKERS,
                         help=f'Number of parallel workers (default: {MAX_WORKERS})')
-    parser.add_argument('--resume', action='store_true',
-                        help='Resume from the last checkpoint')
     parser.add_argument('--github-db', type=str, default=str(GITHUB_DB),
                         help=f'Path to GitHub users database (default: {GITHUB_DB})')
     parser.add_argument('--metrics-db', type=str, default=str(METRICS_DB),
                         help=f'Path to metrics database (default: {METRICS_DB})')
-    parser.add_argument('--skip-existing', action='store_true', default=True,
-                        help='Skip users that already have data (default: True)')
+    parser.add_argument('--resume', action='store_true',
+                        help='Resume from the last checkpoint')
     parser.add_argument('--debug', action='store_true',
-                        help='Enable debug mode')
+                        help='Enable debug logging')
+    parser.add_argument('--use-postgres', action='store_true',
+                        help='Use PostgreSQL instead of SQLite')
+    parser.add_argument('--pg-host', type=str, default=DEFAULT_PG_HOST,
+                        help=f'PostgreSQL host (default: {DEFAULT_PG_HOST})')
+    parser.add_argument('--pg-port', type=int, default=DEFAULT_PG_PORT,
+                        help=f'PostgreSQL port (default: {DEFAULT_PG_PORT})')
+    parser.add_argument('--pg-user', type=str, default=DEFAULT_PG_USER,
+                        help=f'PostgreSQL username (default: {DEFAULT_PG_USER})')
+    parser.add_argument('--pg-password', type=str, default=DEFAULT_PG_PASSWORD,
+                        help=f'PostgreSQL password (default: {DEFAULT_PG_PASSWORD})')
+    parser.add_argument('--pg-db', type=str, default=DEFAULT_PG_DB,
+                        help=f'PostgreSQL database name (default: {DEFAULT_PG_DB})')
     return parser.parse_args()
 
 def init_metrics_db(db_path):
-    """Initialize the metrics database."""
-    # Create parent directory if it doesn't exist
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    """
+    Initialize the metrics database if it doesn't exist.
     
-    # Connect to database
+    Args:
+        db_path: Path to metrics database
+    """
+    if os.path.exists(db_path):
+        logger.info(f"Metrics database already exists at {db_path}")
+        return
+    
+    logger.info(f"Creating metrics database at {db_path}")
+    
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     # Create users table
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         id INTEGER PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
         github_id INTEGER,
@@ -89,7 +113,7 @@ def init_metrics_db(db_path):
     
     # Create metrics table
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS metrics (
+    CREATE TABLE metrics (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL,
         pulls INTEGER,
@@ -106,7 +130,7 @@ def init_metrics_db(db_path):
     
     # Create repositories table
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS repositories (
+    CREATE TABLE repositories (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL,
         name TEXT,
@@ -121,30 +145,34 @@ def init_metrics_db(db_path):
     )
     ''')
     
-    # Create index on username for faster lookups
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_username ON users(username)')
+    # Create index on username
+    cursor.execute('CREATE INDEX idx_username ON users(username)')
     
     conn.commit()
-    logger.info(f"Metrics database initialized at {db_path}")
-    return conn
-
-def get_existing_users(metrics_db_path):
-    """Get a set of usernames that already have data in the metrics database."""
-    if not os.path.exists(metrics_db_path):
-        return set()
-    
-    conn = sqlite3.connect(metrics_db_path)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT username FROM users")
-    existing_users = {row[0] for row in cursor.fetchall()}
-    
     conn.close()
     
-    logger.info(f"Found {len(existing_users)} existing users in metrics database")
-    return existing_users
+    logger.info("Metrics database initialized successfully")
 
-def sample_users(github_db_path, batch_size, existing_users=None):
+def get_existing_users(metrics_db_path, use_postgres=False, pg_params=None):
+    """
+    Get set of usernames that already have data in the metrics database.
+    
+    Args:
+        metrics_db_path: Path to metrics database
+        use_postgres: Whether to use PostgreSQL
+        pg_params: PostgreSQL connection parameters
+        
+    Returns:
+        Set of usernames
+    """
+    if use_postgres:
+        if pg_params is None:
+            pg_params = {}
+        return get_existing_users_postgres(**pg_params)
+    else:
+        return get_existing_users_sqlite(metrics_db_path)
+
+def sample_users(github_db_path, batch_size, existing_users=None, use_postgres=False, pg_params=None):
     """
     Sample users from the GitHub database with a distribution favoring later users,
     skipping users that already have data.
@@ -153,537 +181,583 @@ def sample_users(github_db_path, batch_size, existing_users=None):
         github_db_path: Path to GitHub users database
         batch_size: Number of users to sample
         existing_users: Set of usernames to skip
+        use_postgres: Whether to use PostgreSQL
+        pg_params: PostgreSQL connection parameters
         
     Returns:
         List of user dictionaries with 'id' and 'login' keys
     """
-    if existing_users is None:
-        existing_users = set()
-    
-    conn = sqlite3.connect(github_db_path)
-    cursor = conn.cursor()
-    
-    # Get total user count and ID range
-    cursor.execute('SELECT COUNT(*), MIN(id), MAX(id) FROM github_users')
-    total_count, min_id, max_id = cursor.fetchone()
-    
-    logger.info(f"GitHub database contains {total_count:,} users with IDs from {min_id:,} to {max_id:,}")
-    
-    # Create a weighted distribution favoring later users
-    # We'll divide the range into segments and sample more from later segments
-    segments = 10
-    segment_size = (max_id - min_id) // segments
-    
-    # Weights for each segment (increasing weights for later segments)
-    # Later segments have higher probability
-    weights = [1, 1, 1, 2, 2, 3, 3, 4, 4, 5]
-    total_weight = sum(weights)
-    
-    # Calculate how many users to sample from each segment
-    segment_samples = []
-    for weight in weights:
-        segment_samples.append(int(batch_size * weight / total_weight))
-    
-    # Adjust to ensure we get exactly batch_size users
-    while sum(segment_samples) < batch_size:
-        segment_samples[-1] += 1
-    
-    users = []
-    skipped_count = 0
-    
-    # Sample users from each segment
-    for i in range(segments):
-        segment_start = min_id + i * segment_size
-        segment_end = segment_start + segment_size - 1 if i < segments - 1 else max_id
-        segment_count = segment_samples[i]
-        
-        if segment_count > 0:
-            # Get more users than needed to account for skipping existing users
-            extra_factor = 2  # Get 2x more users than needed
-            
-            # Get random users from this segment
-            cursor.execute('''
-                SELECT id, login FROM github_users 
-                WHERE id BETWEEN ? AND ?
-                ORDER BY RANDOM() 
-                LIMIT ?
-            ''', (segment_start, segment_end, segment_count * extra_factor))
-            
-            segment_users = []
-            for row in cursor.fetchall():
-                user_id, username = row
-                
-                # Skip users that already have data
-                if username in existing_users:
-                    skipped_count += 1
-                    continue
-                
-                segment_users.append({'id': user_id, 'login': username})
-                
-                # Stop once we have enough users for this segment
-                if len(segment_users) >= segment_count:
-                    break
-            
-            users.extend(segment_users)
-            
-            logger.info(f"Sampled {len(segment_users)} users from segment {i+1} (IDs {segment_start:,}-{segment_end:,})")
-    
-    conn.close()
-    
-    logger.info(f"Sampled {len(users)} users, skipped {skipped_count} existing users")
-    
-    # If we couldn't get enough users, log a warning
-    if len(users) < batch_size:
-        logger.warning(f"Could only sample {len(users)} users, fewer than requested {batch_size}")
-    
-    return users
+    if use_postgres:
+        if pg_params is None:
+            pg_params = {}
+        return sample_users_postgres(batch_size=batch_size, existing_users=existing_users, **pg_params)
+    else:
+        return sample_users_sqlite(github_db_path, batch_size, existing_users)
 
 def fetch_github_data(username, github_id=None):
-    """Fetch GitHub data for a user."""
-    logger.info(f"Fetching GitHub data for {username}...")
-    
-    max_retries = 5
-    base_delay = 2  # Base delay in seconds
-    
-    for attempt in range(max_retries):
-        try:
-            # Call the GitHub API service
-            response = fetch_all_data(username)
-            
-            # Check if the response contains errors related to rate limiting
-            if isinstance(response, dict) and 'error' in response:
-                error_msg = response['error']
-                if 'rate limit' in error_msg.lower() or 'exceeded a secondary rate limit' in error_msg.lower():
-                    # Calculate exponential backoff with jitter
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning(f"Rate limit exceeded. Retrying in {delay:.2f} seconds (attempt {attempt+1}/{max_retries})")
-                    time.sleep(delay)
-                    continue
-            
-            # Process the response
-            if response and isinstance(response, dict) and not response.get('error'):
-                return response
-            else:
-                error_msg = "Invalid response format. "
-                if isinstance(response, dict) and response.get('error'):
-                    error_msg += f" error: {response['error']}"
-                raise ValueError(error_msg)
-                
-        except Exception as e:
-            # If this is the last attempt, raise the exception
-            if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch data for {username} after {max_retries} attempts: {str(e)}")
-                raise
-            
-            # Otherwise, retry with exponential backoff
-            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-            logger.warning(f"Error fetching data for {username}, retrying in {delay:.2f} seconds: {str(e)}")
-            time.sleep(delay)
-    
-    # This should not be reached due to the exception in the last attempt
-    raise ValueError(f"Failed to fetch data for {username} after {max_retries} attempts")
-
-def collect_user_data(username, user_id):
     """
-    Collect data for a specific GitHub user.
+    Fetch GitHub data for a user with exponential backoff for rate limits.
     
     Args:
         username: GitHub username
-        user_id: User ID in the database
+        github_id: GitHub user ID
         
     Returns:
-        Dictionary with user metrics or error information
+        Dictionary with user data or None if failed
     """
-    try:
-        start_time = datetime.now()
-        logger.info(f"Collecting data for GitHub user: {username} (ID: {user_id})")
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        
-        # Fetch GitHub data
-        logger.info(f"Fetching GitHub data for {username}...")
-        github_data = fetch_github_data(username)
-        
-        if 'error' in github_data:
-            logger.warning(f"Error fetching data for {username}: {github_data['error']}")
-            return {
-                'username': username,
-                'user_id': user_id,
-                'status': 'error',
-                'error': github_data['error'],
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        # Aggregate user data and calculate metrics
-        logger.info(f"Aggregating data for {username}...")
-        result = aggregate_user_data(username, github_data)
-        
-        # Calculate impact score
-        impact_score = calculate_impact_score(result)
-        result['impact_score'] = impact_score
-        
-        # Add user ID, timestamp and processing time
-        result['user_id'] = user_id
-        result['timestamp'] = datetime.now().isoformat()
-        result['processing_time'] = (datetime.now() - start_time).total_seconds()
-        result['status'] = 'success'
-        
-        # Ensure username is in the result
-        if 'username' not in result:
-            result['username'] = username
-        
-        # Save the result to a JSON file
-        output_file = OUTPUT_DIR / f"{username}_metrics.json"
-        with open(output_file, 'w') as f:
-            json.dump(result, f, indent=2)
-        
-        logger.info(f"Successfully processed {username} in {result['processing_time']:.2f}s")
-        return result
+    max_retries = 5
+    base_delay = 2  # seconds
     
-    except Exception as e:
-        logger.error(f"Exception processing {username}: {str(e)}", exc_info=True)
-        return {
-            'username': username,
-            'user_id': user_id,
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }
+    github_client = GitHubGraphQL()
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Fetch user data from GitHub API
+            user_data = github_client.get_user_data(username)
+            
+            if user_data:
+                # Add GitHub ID if available
+                if github_id:
+                    user_data['github_id'] = github_id
+                
+                # Add username to ensure it's in the result
+                user_data['username'] = username
+                
+                return user_data
+            else:
+                logger.warning(f"No data returned for user {username} (attempt {attempt}/{max_retries})")
+        except Exception as e:
+            if "rate limit" in str(e).lower():
+                # Handle rate limit with exponential backoff
+                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+                logger.warning(f"Rate limit hit for {username}, retrying in {delay:.2f}s (attempt {attempt}/{max_retries})")
+                time.sleep(delay)
+            else:
+                logger.error(f"Error fetching data for {username}: {e}")
+                # For non-rate-limit errors, we might still want to retry
+                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+                logger.warning(f"Retrying in {delay:.2f}s (attempt {attempt}/{max_retries})")
+                time.sleep(delay)
+    
+    logger.error(f"Failed to fetch data for {username} after {max_retries} attempts")
+    return None
 
-def store_user_data(conn, user_data):
+def collect_user_data(username, user_id):
     """
-    Store user data in the metrics database.
+    Collect GitHub metrics for a user.
     
     Args:
-        conn: Database connection
-        user_data: User metrics dictionary
+        username: GitHub username
+        user_id: GitHub user ID
+        
+    Returns:
+        Dictionary with user metrics or None if failed
+    """
+    logger.info(f"Collecting data for user {username} (ID: {user_id})")
+    
+    try:
+        # Fetch raw data from GitHub API
+        user_data = fetch_github_data(username, user_id)
+        
+        if not user_data:
+            logger.error(f"Failed to fetch data for user {username}")
+            return None
+        
+        # Save raw data to JSON file
+        output_file = OUTPUT_DIR / f"{username}_metrics.json"
+        with open(output_file, 'w') as f:
+            json.dump(user_data, f, indent=2)
+        
+        logger.debug(f"Saved raw data for {username} to {output_file}")
+        
+        # Process the data
+        processed_data = aggregate_user_data(user_data)
+        
+        # Calculate impact score
+        impact_score = calculate_impact_score(processed_data)
+        
+        # Add impact score to processed data
+        processed_data['impact_score'] = impact_score
+        
+        # Add username to ensure it's in the result
+        if 'username' not in processed_data:
+            processed_data['username'] = username
+        
+        # Add GitHub ID if available
+        if user_id and 'github_id' not in processed_data:
+            processed_data['github_id'] = user_id
+        
+        logger.info(f"Collected data for {username} with impact score {impact_score:.2f}")
+        
+        return processed_data
+    
+    except Exception as e:
+        logger.error(f"Error collecting data for {username}: {e}", exc_info=True)
+        return None
+
+def store_user_data_sqlite(conn, user_data):
+    """
+    Store user data in SQLite database.
+    
+    Args:
+        conn: SQLite connection
+        user_data: User data dictionary
         
     Returns:
         User ID in the database
     """
+    if 'username' not in user_data:
+        logger.error(f"Missing username in user data: {user_data}")
+        return None
+    
+    username = user_data['username']
+    logger.debug(f"Storing data for user {username} in SQLite database")
+    
     cursor = conn.cursor()
     
     try:
-        # Begin transaction
-        conn.execute('BEGIN TRANSACTION')
-        
-        # Extract user info
-        username = user_data.get('username')
-        if not username:
-            logger.error("Missing username in user data")
-            return None
-            
-        github_id = user_data.get('user_id')
-        name = user_data.get('name')
-        email = user_data.get('email')
-        company = user_data.get('company')
-        location = user_data.get('location')
-        bio = user_data.get('bio')
-        followers = user_data.get('followers', 0)
-        following = user_data.get('following', 0)
-        impact_score = user_data.get('impact_score', 0)
-        
-        # Debug log
-        logger.debug(f"Storing user data for {username} (GitHub ID: {github_id})")
-        logger.debug(f"User info: name={name}, email={email}, company={company}, location={location}")
-        logger.debug(f"Followers: {followers}, Following: {following}, Impact Score: {impact_score}")
-        
-        # Insert user
+        # Insert user data
         cursor.execute('''
-        INSERT OR REPLACE INTO users 
-        (username, github_id, name, email, company, location, bio, followers, following, impact_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (username, github_id, name, email, company, location, bio, followers, following, impact_score))
+        INSERT INTO users (
+            username, github_id, name, email, company, location, bio, 
+            followers, following, impact_score
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            username,
+            user_data.get('github_id'),
+            user_data.get('name'),
+            user_data.get('email'),
+            user_data.get('company'),
+            user_data.get('location'),
+            user_data.get('bio'),
+            user_data.get('followers', 0),
+            user_data.get('following', 0),
+            user_data.get('impact_score', 0.0)
+        ))
         
         user_id = cursor.lastrowid
-        logger.debug(f"Inserted user {username} with database ID: {user_id}")
+        logger.debug(f"Inserted user {username} with ID {user_id}")
         
-        # Insert metrics
-        contributions = user_data.get('contributions', {})
-        pulls = contributions.get('pulls', 0)
-        commits = contributions.get('commits', 0)
-        issues = contributions.get('issues', 0)
-        reviews = contributions.get('reviews', 0)
-        repos_impact = contributions.get('repos_impact', 0)
-        consistency = contributions.get('consistency', 0)
-        
-        # Extract repository count
-        metrics = user_data.get('metrics', {})
-        repo_count = len(metrics.get('repositories', []))
-        
-        logger.debug(f"Metrics for {username}: pulls={pulls}, commits={commits}, issues={issues}, reviews={reviews}")
-        logger.debug(f"Repos impact: {repos_impact}, Consistency: {consistency}, Repo count: {repo_count}")
-        
+        # Insert metrics data
         cursor.execute('''
-        INSERT INTO metrics 
-        (user_id, pulls, commits, issues, reviews, repos_impact, consistency, repo_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, pulls, commits, issues, reviews, repos_impact, consistency, repo_count))
+        INSERT INTO metrics (
+            user_id, pulls, commits, issues, reviews, repos_impact, 
+            consistency, repo_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            user_data.get('pulls', 0),
+            user_data.get('commits', 0),
+            user_data.get('issues', 0),
+            user_data.get('reviews', 0),
+            user_data.get('repos_impact', 0.0),
+            user_data.get('consistency', 0.0),
+            len(user_data.get('repositories', []))
+        ))
         
-        # Insert repositories
-        repositories = metrics.get('repositories', [])
-        logger.debug(f"Storing {len(repositories)} repositories for {username}")
+        logger.debug(f"Inserted metrics for user {username}")
         
-        for repo in repositories:
-            name = repo.get('name', '')
-            stars = repo.get('stars', 0)
-            forks = repo.get('forks', 0)
-            primary_language = repo.get('primary_language', '')
-            technical_impact = repo.get('repo_tech_impact', 0)
-            ecosystem_impact = repo.get('repo_eco_impact', 0)
-            total_impact = repo.get('repo_impact', 0)
-            
+        # Insert repository data
+        for repo in user_data.get('repositories', []):
             cursor.execute('''
-            INSERT INTO repositories 
-            (user_id, name, stars, forks, primary_language, technical_impact, ecosystem_impact, total_impact)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, name, stars, forks, primary_language, technical_impact, ecosystem_impact, total_impact))
+            INSERT INTO repositories (
+                user_id, name, stars, forks, primary_language, 
+                technical_impact, ecosystem_impact, total_impact
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                repo.get('name'),
+                repo.get('stars', 0),
+                repo.get('forks', 0),
+                repo.get('primary_language'),
+                repo.get('technical_impact', 0.0),
+                repo.get('ecosystem_impact', 0.0),
+                repo.get('total_impact', 0.0)
+            ))
         
-        # Commit transaction
+        logger.debug(f"Inserted {len(user_data.get('repositories', []))} repositories for user {username}")
+        
         conn.commit()
-        logger.info(f"Data for {username} stored in database")
-        
-        # Verify data was stored
-        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-        if result:
-            logger.debug(f"Verified user {username} was stored with ID {result[0]}")
-        else:
-            logger.warning(f"Failed to verify user {username} was stored")
+        logger.info(f"Stored data for user {username} in database")
         
         return user_id
     
     except Exception as e:
-        # Rollback transaction
         conn.rollback()
-        logger.error(f"Error storing data for {user_data.get('username')}: {str(e)}", exc_info=True)
+        logger.error(f"Error storing data for user {username}: {e}", exc_info=True)
         return None
 
+def store_user_data_postgres(conn, user_data):
+    """
+    Store user data in PostgreSQL database.
+    
+    Args:
+        conn: PostgreSQL connection
+        user_data: User data dictionary
+        
+    Returns:
+        User ID in the database
+    """
+    if 'username' not in user_data:
+        logger.error(f"Missing username in user data: {user_data}")
+        return None
+    
+    username = user_data['username']
+    logger.debug(f"Storing data for user {username} in PostgreSQL database")
+    
+    try:
+        with conn.cursor() as cursor:
+            # Insert user data
+            cursor.execute('''
+            INSERT INTO score_users (
+                username, github_id, name, email, company, location, bio, 
+                followers, following, impact_score
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            ''', (
+                username,
+                user_data.get('github_id'),
+                user_data.get('name'),
+                user_data.get('email'),
+                user_data.get('company'),
+                user_data.get('location'),
+                user_data.get('bio'),
+                user_data.get('followers', 0),
+                user_data.get('following', 0),
+                user_data.get('impact_score', 0.0)
+            ))
+            
+            user_id = cursor.fetchone()[0]
+            logger.debug(f"Inserted user {username} with ID {user_id}")
+            
+            # Insert metrics data
+            cursor.execute('''
+            INSERT INTO score_metrics (
+                user_id, pulls, commits, issues, reviews, repos_impact, 
+                consistency, repo_count
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                user_id,
+                user_data.get('pulls', 0),
+                user_data.get('commits', 0),
+                user_data.get('issues', 0),
+                user_data.get('reviews', 0),
+                user_data.get('repos_impact', 0.0),
+                user_data.get('consistency', 0.0),
+                len(user_data.get('repositories', []))
+            ))
+            
+            logger.debug(f"Inserted metrics for user {username}")
+            
+            # Insert repository data
+            for repo in user_data.get('repositories', []):
+                cursor.execute('''
+                INSERT INTO score_repositories (
+                    user_id, name, stars, forks, primary_language, 
+                    technical_impact, ecosystem_impact, total_impact
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    user_id,
+                    repo.get('name'),
+                    repo.get('stars', 0),
+                    repo.get('forks', 0),
+                    repo.get('primary_language'),
+                    repo.get('technical_impact', 0.0),
+                    repo.get('ecosystem_impact', 0.0),
+                    repo.get('total_impact', 0.0)
+                ))
+            
+            logger.debug(f"Inserted {len(user_data.get('repositories', []))} repositories for user {username}")
+            
+            conn.commit()
+            logger.info(f"Stored data for user {username} in database")
+            
+            return user_id
+    
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error storing data for user {username}: {e}", exc_info=True)
+        return None
+
+def store_user_data(conn, user_data, use_postgres=False):
+    """
+    Store user data in database.
+    
+    Args:
+        conn: Database connection
+        user_data: User data dictionary
+        use_postgres: Whether to use PostgreSQL
+        
+    Returns:
+        User ID in the database
+    """
+    if use_postgres:
+        return store_user_data_postgres(conn, user_data)
+    else:
+        return store_user_data_sqlite(conn, user_data)
+
 def save_progress(processed_users, results):
-    """Save progress to allow resuming later."""
-    progress_data = {
+    """
+    Save progress to a file.
+    
+    Args:
+        processed_users: List of processed usernames
+        results: Dictionary of results by username
+    """
+    progress = {
+        'timestamp': datetime.now().isoformat(),
         'processed_users': processed_users,
-        'timestamp': datetime.now().isoformat()
+        'results': results
     }
     
-    # Save progress
     with open(PROGRESS_FILE, 'w') as f:
-        json.dump(progress_data, f)
+        json.dump(progress, f, indent=2)
     
-    # Save results summary
-    results_file = OUTPUT_DIR / "batch_results.json"
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    logger.info(f"Progress saved: {len(processed_users)} users processed")
+    logger.info(f"Saved progress to {PROGRESS_FILE}")
 
 def load_progress():
-    """Load progress from previous run."""
-    if not PROGRESS_FILE.exists():
-        logger.info("No previous progress found")
-        return set(), []
+    """
+    Load progress from a file.
+    
+    Returns:
+        Tuple of (processed_users, results)
+    """
+    if not os.path.exists(PROGRESS_FILE):
+        logger.info(f"No progress file found at {PROGRESS_FILE}")
+        return [], {}
     
     try:
         with open(PROGRESS_FILE, 'r') as f:
-            progress_data = json.load(f)
+            progress = json.load(f)
         
-        results_file = OUTPUT_DIR / "batch_results.json"
-        if results_file.exists():
-            with open(results_file, 'r') as f:
-                results = json.load(f)
-        else:
-            results = []
+        processed_users = progress.get('processed_users', [])
+        results = progress.get('results', {})
         
-        processed_users = set(progress_data.get('processed_users', []))
-        logger.info(f"Loaded previous progress: {len(processed_users)} users processed")
+        logger.info(f"Loaded progress for {len(processed_users)} users from {PROGRESS_FILE}")
         
         return processed_users, results
     
     except Exception as e:
-        logger.error(f"Error loading progress: {str(e)}")
-        return set(), []
+        logger.error(f"Error loading progress: {e}")
+        return [], {}
 
 def generate_summary(results):
-    """Generate a summary of the results."""
-    successful = [r for r in results if r.get('status') == 'success']
-    failed = [r for r in results if r.get('status') == 'error']
+    """
+    Generate a summary of the batch results.
     
-    print("\n=== Batch Collection Summary ===\n")
-    print(f"Total users processed: {len(results)}")
-    print(f"Successful: {len(successful)}")
-    print(f"Failed: {len(failed)}")
-    
-    if successful:
-        # Sort by impact score
-        successful.sort(key=lambda x: x.get('impact_score', 0), reverse=True)
+    Args:
+        results: Dictionary of results by username
         
-        print("\n=== Top 10 Users by Impact Score ===\n")
-        print(f"{'Username':<20} {'Impact Score':<15} {'Pulls':<8} {'Commits':<8} {'Reviews':<8} {'Issues':<8} {'Repos':<8} {'Consistency':<12}")
-        print("-" * 90)
-        
-        for user in successful[:10]:
-            username = user.get('username', '')
-            impact_score = user.get('impact_score', 0)
-            contributions = user.get('contributions', {})
-            pulls = contributions.get('pulls', 0)
-            commits = contributions.get('commits', 0)
-            reviews = contributions.get('reviews', 0)
-            issues = contributions.get('issues', 0)
-            repos_impact = contributions.get('repos_impact', 0)
-            consistency = contributions.get('consistency', 0)
-            
-            print(f"{username:<20} {impact_score:<15.2f} {pulls:<8} {commits:<8} {reviews:<8} {issues:<8} {repos_impact:<8.2f} {consistency:<12.2f}")
+    Returns:
+        Dictionary with summary statistics
+    """
+    total_users = len(results)
+    successful_users = sum(1 for r in results.values() if r is not None)
+    failed_users = total_users - successful_users
     
-    if failed:
-        print("\n=== Failed Users (Sample) ===\n")
-        for user in failed[:10]:  # Show only first 10 failures
-            print(f"{user.get('username')}: {user.get('error')}")
-        
-        if len(failed) > 10:
-            print(f"... and {len(failed) - 10} more failures")
+    # Calculate average metrics for successful users
+    avg_pulls = 0
+    avg_commits = 0
+    avg_issues = 0
+    avg_reviews = 0
+    avg_repos = 0
+    avg_impact = 0.0
     
-    # Save summary to file
+    if successful_users > 0:
+        successful_results = [r for r in results.values() if r is not None]
+        
+        avg_pulls = sum(r.get('pulls', 0) for r in successful_results) / successful_users
+        avg_commits = sum(r.get('commits', 0) for r in successful_results) / successful_users
+        avg_issues = sum(r.get('issues', 0) for r in successful_results) / successful_users
+        avg_reviews = sum(r.get('reviews', 0) for r in successful_results) / successful_users
+        avg_repos = sum(len(r.get('repositories', [])) for r in successful_results) / successful_users
+        avg_impact = sum(r.get('impact_score', 0.0) for r in successful_results) / successful_users
+    
+    # Get top users by impact score
+    top_users = []
+    for username, result in results.items():
+        if result is not None:
+            top_users.append({
+                'username': username,
+                'impact_score': result.get('impact_score', 0.0),
+                'pulls': result.get('pulls', 0),
+                'commits': result.get('commits', 0),
+                'issues': result.get('issues', 0),
+                'reviews': result.get('reviews', 0),
+                'repos': len(result.get('repositories', []))
+            })
+    
+    top_users.sort(key=lambda x: x['impact_score'], reverse=True)
+    top_users = top_users[:15]  # Keep top 15
+    
     summary = {
         'timestamp': datetime.now().isoformat(),
-        'total': len(results),
-        'successful': len(successful),
-        'failed': len(failed),
-        'top_users': [
-            {
-                'username': user.get('username'),
-                'impact_score': user.get('impact_score', 0),
-                'contributions': user.get('contributions', {})
-            }
-            for user in successful[:20]  # Top 20 users
-        ],
-        'error_summary': {}
+        'total_users': total_users,
+        'successful_users': successful_users,
+        'failed_users': failed_users,
+        'success_rate': successful_users / total_users if total_users > 0 else 0,
+        'average_metrics': {
+            'pulls': avg_pulls,
+            'commits': avg_commits,
+            'issues': avg_issues,
+            'reviews': avg_reviews,
+            'repositories': avg_repos,
+            'impact_score': avg_impact
+        },
+        'top_users': top_users
     }
     
-    # Count error types
-    for user in failed:
-        error = user.get('error', '')
-        error_type = error[:50] if error else 'Unknown error'  # Use first 50 chars as error type
-        summary['error_summary'][error_type] = summary['error_summary'].get(error_type, 0) + 1
-    
+    # Save summary to file
     summary_file = OUTPUT_DIR / "batch_summary.json"
     with open(summary_file, 'w') as f:
         json.dump(summary, f, indent=2)
     
-    logger.info(f"Summary saved to {summary_file}")
+    logger.info(f"Saved batch summary to {summary_file}")
+    
+    # Print summary table
+    logger.info(f"\nBatch Summary:")
+    logger.info(f"Total users: {total_users}")
+    logger.info(f"Successful: {successful_users} ({summary['success_rate']:.1%})")
+    logger.info(f"Failed: {failed_users}")
+    logger.info(f"\nAverage Metrics:")
+    logger.info(f"Pulls: {avg_pulls:.1f}")
+    logger.info(f"Commits: {avg_commits:.1f}")
+    logger.info(f"Issues: {avg_issues:.1f}")
+    logger.info(f"Reviews: {avg_reviews:.1f}")
+    logger.info(f"Repositories: {avg_repos:.1f}")
+    logger.info(f"Impact Score: {avg_impact:.2f}")
+    
+    if top_users:
+        logger.info(f"\nTop Users by Impact Score:")
+        logger.info(f"{'Username':<20} {'Impact':<8} {'Pulls':<8} {'Commits':<8} {'Issues':<8} {'Reviews':<8} {'Repos':<8}")
+        logger.info(f"{'-'*70}")
+        
+        for user in top_users:
+            logger.info(f"{user['username']:<20} {user['impact_score']:<8.2f} {user['pulls']:<8} {user['commits']:<8} "
+                       f"{user['issues']:<8} {user['reviews']:<8} {user['repos']:<8}")
+    
+    return summary
 
 def main():
     """Main function to collect GitHub metrics for a batch of users."""
     args = parse_args()
     
-    # Set up logging level
+    # Set logging level
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logger.debug("Debug mode enabled")
+        logger.setLevel(logging.DEBUG)
     
-    # Create data directory if it doesn't exist
+    # Create output directory if it doesn't exist
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(Path(__file__).parent / "logs", exist_ok=True)
+    os.makedirs(OUTPUT_DIR.parent / "logs", exist_ok=True)
     
-    # Initialize metrics database
-    metrics_conn = init_metrics_db(args.metrics_db)
+    # Initialize metrics database if using SQLite
+    if not args.use_postgres:
+        init_metrics_db(args.metrics_db)
+    
+    # PostgreSQL connection parameters
+    pg_params = {
+        'host': args.pg_host,
+        'port': args.pg_port,
+        'user': args.pg_user,
+        'password': args.pg_password,
+        'dbname': args.pg_db
+    }
     
     # Verify database connection
     try:
-        cursor = metrics_conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        count = cursor.fetchone()[0]
-        logger.debug(f"Database connection verified. Current user count: {count}")
+        if args.use_postgres:
+            with postgres_connection(**pg_params) as conn:
+                logger.info("Successfully connected to PostgreSQL database")
+        else:
+            with sqlite_connection(args.metrics_db) as conn:
+                logger.info("Successfully connected to SQLite database")
     except Exception as e:
-        logger.error(f"Database connection error: {str(e)}", exc_info=True)
+        logger.error(f"Failed to connect to database: {e}")
         sys.exit(1)
     
-    # Get existing users to skip
-    existing_users = set()
-    if args.skip_existing:
-        existing_users = get_existing_users(args.metrics_db)
+    # Get existing users
+    existing_users = get_existing_users(args.metrics_db, args.use_postgres, pg_params)
+    logger.info(f"Found {len(existing_users)} existing users in the metrics database")
     
-    # Initialize or load progress
+    # Load progress if resuming
+    processed_users = []
+    results = {}
+    
     if args.resume:
         processed_users, results = load_progress()
-        existing_users.update(processed_users)
-    else:
-        processed_users = set()
-        results = []
+        
+        # Add processed users to existing users to skip them
+        for username in processed_users:
+            existing_users.add(username)
     
-    # Sample users
-    users_to_process = sample_users(args.github_db, args.batch_size, existing_users)
+    # Sample users from GitHub database
+    users = sample_users(args.github_db, args.batch_size, existing_users, args.use_postgres, pg_params)
     
-    logger.info(f"Starting collection for {len(users_to_process)} users")
+    if not users:
+        logger.error("No users to process")
+        sys.exit(1)
+    
+    logger.info(f"Starting collection for {len(users)} users with {args.workers} workers")
     
     # Process users in parallel
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         # Submit tasks
-        futures = []
-        
-        for user in users_to_process:
-            future = executor.submit(collect_user_data, user['login'], user['id'])
-            futures.append(future)
+        future_to_user = {
+            executor.submit(collect_user_data, user['login'], user['id']): user['login']
+            for user in users
+        }
         
         # Process results as they complete
-        try:
-            for i, future in enumerate(as_completed(futures)):
+        for future in as_completed(future_to_user):
+            username = future_to_user[future]
+            
+            try:
                 result = future.result()
+                results[username] = result
+                processed_users.append(username)
                 
-                # Ensure result has username
-                if 'username' not in result:
-                    logger.warning(f"Result missing username: {result}")
-                    if 'error' in result:
-                        # Try to find the original user
-                        for user in users_to_process:
-                            if user['id'] == result.get('user_id'):
-                                result['username'] = user['login']
-                                break
+                # Save progress periodically
+                if len(processed_users) % 10 == 0:
+                    save_progress(processed_users, results)
                 
-                # Skip results without username
-                if 'username' not in result:
-                    logger.error(f"Skipping result without username: {result}")
-                    continue
-                
-                results.append(result)
-                processed_users.add(result['username'])
-                
-                # Store successful results in the database
-                if result.get('status') == 'success':
-                    user_id = store_user_data(metrics_conn, result)
-                    if user_id:
-                        logger.debug(f"Successfully stored {result['username']} with ID {user_id}")
-                    else:
-                        logger.warning(f"Failed to store {result['username']} in database")
-                
-                # Save progress periodically (every 10 users or 5%)
-                if (i + 1) % max(10, args.batch_size // 20) == 0:
-                    save_progress(list(processed_users), results)
-                    logger.info(f"Progress: {i + 1}/{len(users_to_process)} users processed ({(i + 1) / len(users_to_process) * 100:.1f}%)")
-        
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user. Saving progress...")
-            executor.shutdown(wait=False)
-            save_progress(list(processed_users), results)
-            metrics_conn.close()
-            sys.exit(1)
+            except Exception as e:
+                logger.error(f"Error processing user {username}: {e}")
+                results[username] = None
+                processed_users.append(username)
     
-    # Final save
-    save_progress(list(processed_users), results)
+    # Save final progress
+    save_progress(processed_users, results)
     
-    # Verify final database state
-    cursor = metrics_conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users")
-    final_count = cursor.fetchone()[0]
-    logger.info(f"Final database user count: {final_count}")
-    
-    # Close database connection
-    metrics_conn.close()
+    # Store results in database
+    if args.use_postgres:
+        with postgres_connection(**pg_params) as conn:
+            for username, result in results.items():
+                if result is not None:
+                    store_user_data(conn, result, True)
+    else:
+        with sqlite_connection(args.metrics_db) as conn:
+            for username, result in results.items():
+                if result is not None:
+                    store_user_data(conn, result, False)
     
     # Generate summary
-    generate_summary(results)
+    summary = generate_summary(results)
     
-    logger.info(f"Batch collection completed: {len(results)} users processed")
+    # Get final count of users in database
+    if args.use_postgres:
+        with postgres_connection(**pg_params) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT COUNT(*) FROM score_users')
+                db_user_count = cursor.fetchone()[0]
+    else:
+        with sqlite_connection(args.metrics_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM users')
+            db_user_count = cursor.fetchone()[0]
+    
+    logger.info(f"Final database user count: {db_user_count}")
+    
+    return summary
 
 if __name__ == "__main__":
     main() 
