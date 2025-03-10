@@ -12,11 +12,11 @@ METRICS_DB="data/metrics_analysis.db"
 RESUME=false
 DEBUG=false
 DELAY=10  # Default delay between batches in seconds
-USE_POSTGRES=false
-PG_HOST="localhost"
+USE_POSTGRES=true
+PG_HOST="github-db.cdoa6qiyakw1.ap-south-1.rds.amazonaws.com"
 PG_PORT=5432
-PG_USER="postgres"
-PG_PASSWORD=""
+PG_USER="commitiq_github"
+PG_PASSWORD="6LH9GHzQfw3UDaoSBTNa"
 PG_DB="github_data"
 
 # Display usage information
