@@ -7,8 +7,8 @@ __pycache__/
 # Virtual Environment
 venv/
 backend/venv/
-backend/#/    #<-- add this
-backend/Create/ #<--- add this
+backend/#/    
+backend/Create/ 
 
 # IDE/Editor Specific
 .DS_Store  # macOS
@@ -19,3 +19,8 @@ Thumbs.db  # Windows
 # Frontend Build Artifacts
 frontend/node_modules/
 frontend/build/
+
+# Data directories
+github_user_db/data/
+data_collection/data/
+
