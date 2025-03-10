@@ -388,7 +388,11 @@ def aggregate_user_data(username, github_data):
                 'repos_impact': 0,
                 'consistency': 0
             },
-            'raw_data': github_data
+            'metrics': {  # New metrics dictionary to store all sub-metrics
+                'repositories': [],
+                'repos_impact': {},
+                'consistency': {}
+            }
         }
         
         # Extract user information
@@ -468,7 +472,40 @@ def aggregate_user_data(username, github_data):
 
             repo_impacts.append(repo_impact)
             
+            # Store repository sub-metrics
+            repo_metrics = {
+                'name': repo.get('name'),
+                'stars': stars,
+                'forks': forks,
+                'collaborators': collaborators,
+                'collab_factor': collab_factor,
+                'developer_commits': developer_commits,
+                'total_commits': total_commits,
+                'contribution_ratio': contribution_ratio,
+                'merged_pull_requests': merged_pull_requests,
+                'closed_pull_requests': closed_pull_requests,
+                'total_pull_requests': total_pull_requests,
+                'pr_acceptance': pr_acceptance,
+                'review_comments': review_comments,
+                'code_quality': code_quality,
+                'repo_tech_impact': repo_tech_impact,
+                'popularity': popularity,
+                'repo_eco_impact': repo_eco_impact,
+                'repo_impact': repo_impact
+            }
+            
+            result['metrics']['repositories'].append(repo_metrics)
+            
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
+        
+        # Store repos_impact sub-metrics
+        result['metrics']['repos_impact'] = {
+            'repo_count': len(result['metrics']['repositories']),
+            'average_impact': result['contributions']['repos_impact'],
+            'max_impact': max(repo_impacts) if repo_impacts else 0,
+            'min_impact': min(repo_impacts) if repo_impacts else 0,
+            'median_impact': np.median(repo_impacts) if repo_impacts else 0
+        }
 
         # Consistency calculation
         weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
@@ -477,6 +514,24 @@ def aggregate_user_data(username, github_data):
             for day in week.get('contributionDays', [])
         ))
         result['contributions']['consistency'] = active_weeks / len(weeks) if weeks else 0    
+        
+        # Store consistency sub-metrics
+        total_days = sum(len(week.get('contributionDays', [])) for week in weeks)
+        active_days = sum(1 for week in weeks for day in week.get('contributionDays', []) 
+                         if day.get('contributionCount', 0) > 0)
+        total_contributions = sum(day.get('contributionCount', 0) 
+                                 for week in weeks 
+                                 for day in week.get('contributionDays', []))
+        
+        result['metrics']['consistency'] = {
+            'total_weeks': len(weeks),
+            'active_weeks': active_weeks,
+            'total_days': total_days,
+            'active_days': active_days,
+            'active_days_ratio': active_days / total_days if total_days else 0,
+            'total_contributions': total_contributions,
+            'avg_contributions_per_active_day': total_contributions / active_days if active_days else 0
+        }
         
         return result
     except Exception as e:
