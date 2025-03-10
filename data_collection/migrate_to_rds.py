@@ -135,6 +135,13 @@ def create_postgres_tables(pg_conn):
         CREATE INDEX IF NOT EXISTS idx_score_username ON score_users(username)
         """)
         
+        # Reset the sequence for score_users if needed
+        cursor.execute("""
+        SELECT setval(pg_get_serial_sequence('score_users', 'id'), 
+                     (SELECT COALESCE(MAX(id), 0) + 1 FROM score_users), 
+                     false)
+        """)
+        
         pg_conn.commit()
         logger.info("PostgreSQL tables created successfully")
 

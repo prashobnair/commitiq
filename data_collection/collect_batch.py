@@ -208,14 +208,12 @@ def fetch_github_data(username, github_id=None):
     max_retries = 5
     base_delay = 2  # seconds
     
-    github_client = GitHubGraphQL()
-    
     for attempt in range(1, max_retries + 1):
         try:
-            # Fetch user data from GitHub API
-            user_data = github_client.get_user_data(username)
+            # Fetch user data from GitHub API using fetch_all_data
+            user_data = fetch_all_data(username)
             
-            if user_data:
+            if user_data and 'error' not in user_data:
                 # Add GitHub ID if available
                 if github_id:
                     user_data['github_id'] = github_id
@@ -225,7 +223,8 @@ def fetch_github_data(username, github_id=None):
                 
                 return user_data
             else:
-                logger.warning(f"No data returned for user {username} (attempt {attempt}/{max_retries})")
+                error_msg = user_data.get('error', 'No data returned') if isinstance(user_data, dict) else 'No data returned'
+                logger.warning(f"Error for user {username} (attempt {attempt}/{max_retries}): {error_msg}")
         except Exception as e:
             if "rate limit" in str(e).lower():
                 # Handle rate limit with exponential backoff
@@ -271,7 +270,7 @@ def collect_user_data(username, user_id):
         logger.debug(f"Saved raw data for {username} to {output_file}")
         
         # Process the data
-        processed_data = aggregate_user_data(user_data)
+        processed_data = aggregate_user_data(username, user_data)
         
         # Calculate impact score
         impact_score = calculate_impact_score(processed_data)
@@ -286,6 +285,21 @@ def collect_user_data(username, user_id):
         # Add GitHub ID if available
         if user_id and 'github_id' not in processed_data:
             processed_data['github_id'] = user_id
+        
+        # Extract user profile information
+        if 'user' in user_data:
+            user_info = user_data['user']
+            processed_data['name'] = user_info.get('name')
+            processed_data['email'] = user_info.get('email')
+            processed_data['company'] = user_info.get('company')
+            processed_data['location'] = user_info.get('location')
+            processed_data['bio'] = user_info.get('bio')
+            
+            # Extract follower and following counts
+            followers = user_info.get('followers', {}).get('totalCount', 0)
+            following = user_info.get('following', {}).get('totalCount', 0)
+            processed_data['followers'] = followers
+            processed_data['following'] = following
         
         logger.info(f"Collected data for {username} with impact score {impact_score:.2f}")
         
@@ -407,28 +421,66 @@ def store_user_data_postgres(conn, user_data):
     
     try:
         with conn.cursor() as cursor:
-            # Insert user data
-            cursor.execute('''
-            INSERT INTO score_users (
-                username, github_id, name, email, company, location, bio, 
-                followers, following, impact_score
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            ''', (
-                username,
-                user_data.get('github_id'),
-                user_data.get('name'),
-                user_data.get('email'),
-                user_data.get('company'),
-                user_data.get('location'),
-                user_data.get('bio'),
-                user_data.get('followers', 0),
-                user_data.get('following', 0),
-                user_data.get('impact_score', 0.0)
-            ))
+            # Check if user already exists
+            cursor.execute("SELECT id FROM score_users WHERE username = %s", (username,))
+            existing_user = cursor.fetchone()
             
-            user_id = cursor.fetchone()[0]
-            logger.debug(f"Inserted user {username} with ID {user_id}")
+            if existing_user:
+                user_id = existing_user[0]
+                logger.debug(f"User {username} already exists with ID {user_id}")
+                
+                # Update existing user
+                cursor.execute('''
+                UPDATE score_users SET
+                    github_id = %s,
+                    name = %s,
+                    email = %s,
+                    company = %s,
+                    location = %s,
+                    bio = %s,
+                    followers = %s,
+                    following = %s,
+                    impact_score = %s
+                WHERE id = %s
+                ''', (
+                    user_data.get('github_id'),
+                    user_data.get('name'),
+                    user_data.get('email'),
+                    user_data.get('company'),
+                    user_data.get('location'),
+                    user_data.get('bio'),
+                    user_data.get('followers', 0),
+                    user_data.get('following', 0),
+                    user_data.get('impact_score', 0.0),
+                    user_id
+                ))
+                
+                # Delete existing metrics and repositories
+                cursor.execute("DELETE FROM score_metrics WHERE user_id = %s", (user_id,))
+                cursor.execute("DELETE FROM score_repositories WHERE user_id = %s", (user_id,))
+            else:
+                # Insert new user
+                cursor.execute('''
+                INSERT INTO score_users (
+                    username, github_id, name, email, company, location, bio, 
+                    followers, following, impact_score
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                ''', (
+                    username,
+                    user_data.get('github_id'),
+                    user_data.get('name'),
+                    user_data.get('email'),
+                    user_data.get('company'),
+                    user_data.get('location'),
+                    user_data.get('bio'),
+                    user_data.get('followers', 0),
+                    user_data.get('following', 0),
+                    user_data.get('impact_score', 0.0)
+                ))
+                
+                user_id = cursor.fetchone()[0]
+                logger.debug(f"Inserted new user {username} with ID {user_id}")
             
             # Insert metrics data
             cursor.execute('''
