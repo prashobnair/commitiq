@@ -12,6 +12,12 @@ METRICS_DB="data/metrics_analysis.db"
 RESUME=false
 DEBUG=false
 DELAY=10  # Default delay between batches in seconds
+USE_POSTGRES=false
+PG_HOST="localhost"
+PG_PORT=5432
+PG_USER="postgres"
+PG_PASSWORD=""
+PG_DB="github_data"
 
 # Display usage information
 function show_usage {
@@ -24,6 +30,12 @@ function show_usage {
     echo "  --resume              Resume from the last checkpoint"
     echo "  --debug               Enable debug mode"
     echo "  --delay SECONDS       Delay in seconds between batches (default: $DELAY)"
+    echo "  --use-postgres        Use PostgreSQL instead of SQLite"
+    echo "  --pg-host HOST        PostgreSQL host (default: $PG_HOST)"
+    echo "  --pg-port PORT        PostgreSQL port (default: $PG_PORT)"
+    echo "  --pg-user USER        PostgreSQL username (default: $PG_USER)"
+    echo "  --pg-password PASS    PostgreSQL password"
+    echo "  --pg-db DB            PostgreSQL database name (default: $PG_DB)"
     echo "  --help                Show this help message"
     exit 1
 }
@@ -59,6 +71,30 @@ while [[ $# -gt 0 ]]; do
             DELAY="$2"
             shift 2
             ;;
+        --use-postgres)
+            USE_POSTGRES=true
+            shift
+            ;;
+        --pg-host)
+            PG_HOST="$2"
+            shift 2
+            ;;
+        --pg-port)
+            PG_PORT="$2"
+            shift 2
+            ;;
+        --pg-user)
+            PG_USER="$2"
+            shift 2
+            ;;
+        --pg-password)
+            PG_PASSWORD="$2"
+            shift 2
+            ;;
+        --pg-db)
+            PG_DB="$2"
+            shift 2
+            ;;
         --help)
             show_usage
             ;;
@@ -69,8 +105,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate GitHub database exists
-if [ ! -f "$GITHUB_DB" ]; then
+# Validate GitHub database exists if not using PostgreSQL
+if [ "$USE_POSTGRES" = false ] && [ ! -f "$GITHUB_DB" ]; then
     echo "Error: GitHub database not found at $GITHUB_DB"
     exit 1
 fi
@@ -92,6 +128,16 @@ if [ "$DEBUG" = true ]; then
     CMD="$CMD --debug"
 fi
 
+# Add PostgreSQL flags if needed
+if [ "$USE_POSTGRES" = true ]; then
+    CMD="$CMD --use-postgres --pg-host $PG_HOST --pg-port $PG_PORT --pg-user $PG_USER --pg-db $PG_DB"
+    
+    # Add password if provided
+    if [ -n "$PG_PASSWORD" ]; then
+        CMD="$CMD --pg-password $PG_PASSWORD"
+    fi
+fi
+
 # Run the collection script
 echo "Starting batch collection of GitHub user metrics..."
 echo "Batch size: $BATCH_SIZE"
@@ -101,6 +147,13 @@ echo "Metrics database: $METRICS_DB"
 echo "Resume: $RESUME"
 echo "Debug: $DEBUG"
 echo "Delay between batches: $DELAY seconds"
+echo "Use PostgreSQL: $USE_POSTGRES"
+if [ "$USE_POSTGRES" = true ]; then
+    echo "PostgreSQL host: $PG_HOST"
+    echo "PostgreSQL port: $PG_PORT"
+    echo "PostgreSQL user: $PG_USER"
+    echo "PostgreSQL database: $PG_DB"
+fi
 echo
 
 echo "Running command: $CMD"
