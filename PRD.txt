@@ -1,0 +1,257 @@
+# V3. Product Requirements Document (PRD)
+
+---
+
+## 1. Product Overview
+
+**Vision:**
+
+Empower recruiters, hiring managers, and candidates by providing objective, actionable insights into developers’ contributions. Start with public profile analysis (GitHub, GitLab, etc.) and evolve into a full-spectrum tool that also evaluates internal developer performance (e.g., via SharePoint, internal repos).
+
+**Objective:**
+
+Develop a SaaS platform that aggregates and analyzes data from public and eventually internal sources to generate an “Impact Score” along with detailed insights—helping non-technical recruiters and technical hiring managers make informed decisions.
+
+---
+
+## 2. Problem Statement & Objectives
+
+### **Problem Statement**
+
+- **Superficial Metrics:**
+    
+    Recruiters today rely on easily gamed metrics (e.g., commit counts or “green squares”) that do not differentiate between meaningful contributions and minor edits.
+    
+- **Non-Technical Hurdles:**
+    
+    Non-technical recruiters are challenged to interpret technical details, while engineering managers need deeper insights into the quality and impact of contributions.
+    
+- **Fragmented Data:**
+    
+    Candidate profiles are spread across multiple repositories and platforms, and current analytics don’t capture context or consistency.
+    
+
+### **Objectives**
+
+- **Objective Analysis:**
+    
+    Create a balanced scoring engine that weighs various contribution types, project influence, and collaboration.
+    
+- **Actionable Insights:**
+    
+    Provide both high-level summaries for recruiters and detailed, drill-down analytics for hiring managers.
+    
+- **Scalability:**
+    
+    Start with public profiles and expand into internal performance evaluation as additional data sources become integrated.
+    
+
+---
+
+## 3. Target Audience
+
+- **Primary Users:**
+    - **Non-Technical Recruiters & HR Teams:**Need simple, clear, and actionable candidate reports.
+    - **Engineering/Hiring Managers:**Require detailed, interactive dashboards and granular metrics.
+- **Secondary Users:**
+    - **Candidates:**Who wish to understand and improve their contribution impact.
+    - **HR Platforms/ATS Providers:**For seamless integration and added value in candidate evaluations.
+
+---
+
+## 4. Key Metrics & Scoring Framework
+
+### **GitHub & Public Metrics**
+
+| **Category** | **Metrics** |
+| --- | --- |
+| **Contribution Volume & Consistency** | Total commits, PRs (merged vs. open), issues, code reviews, active months, contribution frequency |
+| **Contribution Quality** | Code churn (lines added/removed), PR acceptance rate, basic static analysis hints (e.g., test file contributions) |
+| **Project Impact** | Repository stars, forks, contributor count, candidate’s role (maintainer status), repository update frequency |
+| **Collaboration & Community** | Comments on PRs/issues, review participation, discussion contributions, peer endorsements (stars/forks) |
+
+### **Preliminary Impact Score Formula (MVP Version)**
+
+A weighted composite score (out of 100) could be:
+
+- **Merged PRs:** 30%
+- **Code Commits:** 25%
+- **Project Impact:** 20%
+- **Code Reviews:** 15%
+- **Issues & Others:** 10%
+
+*Note:* These weights are provisional and will be refined with recruiter and hiring manager feedback.
+
+---
+
+## 5. MVP Features
+
+### **Core Functionality**
+
+- **GitHub Profile Analysis:**
+    - **Input:** GitHub/GitLab username or URL.
+    - **Output:** Aggregated summary covering the candidate’s contributions over the past 2 years (or user-defined period).
+- **Contribution Breakdown:**
+    - Categorize contributions into:
+        - Code Commits (additions/deletions)
+        - Pull Requests (merged vs. open)
+        - Issues (created/resolved)
+        - Documentation (README/wiki edits)
+        - Code Reviews (comments/approvals)
+- **Impact Score Engine:**
+    - Calculate a composite Impact Score using the weighted metrics.
+    - Display how each component contributes to the overall score.
+- **Dashboard & Reporting:**
+    - **Recruiter View:**
+        - A one-page visual report showing the overall Impact Score (with a color-coded indicator), key metrics (merged PRs, commit count, etc.), and a brief narrative summary.
+        - Options to download/share reports (PDF, integration with ATS).
+    - **Engineering Manager View:**
+        - An interactive dashboard with drill-down capabilities into repository-level data, trends over time, and technical metrics.
+        - Advanced filters (by contribution type, time period, repository, etc.) and multi-candidate comparison tools.
+
+---
+
+## 6. User Experience & Interaction Model
+
+### **For Non-Technical Recruiters**
+
+- **Key Information:**
+    - **Impact Score & Visual Summary:**A prominent, easy-to-understand score (e.g., with traffic light color coding) that encapsulates overall candidate performance.
+    - **High-Level Metrics:**Display merged PRs, commit count, and collaboration indicators.
+    - **Narrative Insights:**A short summary explaining key strengths and any red flags (e.g., “High dependency on documentation updates”).
+- **Workflow:**
+    - **Single Candidate Lookup:**A straightforward input field for a GitHub/GitLab username or URL.
+    - **Bulk Upload (Future):**Option for CSV upload to process multiple candidates at once.
+    - **Instant Report:**Immediate display of the candidate report on the web, with options to export/share.
+
+### **For Engineering/Hiring Managers**
+
+- **Key Information:**
+    - **Detailed Analytics:**In-depth metrics such as code churn, PR acceptance rates, repository-specific data, and historical contribution trends.
+    - **Interactive Dashboard:**Ability to filter, drill down, and compare candidates side-by-side.
+    - **Advanced Comparison & Export Options:**Exportable reports and API access for integration with internal tools.
+- **Workflow:**
+    - **Multi-User Comparison:**Option to input several usernames or use a custom query interface.
+    - **Deep Dive Reports:**Clickable charts for exploring specific data points and detailed breakdowns.
+    - **Integration:**Options for integrating data with existing ATS or internal performance dashboards.
+
+---
+
+## 7. Technical Stack
+
+### **Backend**
+
+- **Language:** Python (preferred) or Node.js.
+- **Framework:**
+    - Python: Django or Flask for API logic.
+    - Node.js: Express (if chosen).
+- **APIs:**
+    - GitHub REST & GraphQL APIs for data retrieval.
+- **Data Pipeline:**
+    - Celery (Python) for handling asynchronous tasks and managing rate limits.
+- **Database & Caching:**
+    - PostgreSQL for structured data storage.
+    - Redis for caching frequently accessed data.
+- **Scoring Engine:**
+    - Custom heuristic-based algorithm, with potential ML integration later.
+
+### **Frontend**
+
+- **Framework:** React with TypeScript.
+- **Visualization:**
+    - D3.js or Chart.js for dynamic dashboards.
+- **Hosting:**
+    - Vercel or Netlify.
+
+### **DevOps & Infrastructure**
+
+- **Cloud Provider:** AWS or Azure (using EC2, S3, Lambda, etc.).
+- **CI/CD:** GitHub Actions.
+- **Monitoring:** Prometheus and Grafana.
+
+---
+
+## 8. Scope for Advanced Analytics & Code Analysis
+
+### **For MVP:**
+
+- **Focus on Aggregated Metrics:**Utilize readily available data from GitHub and similar APIs (commit counts, PR statuses, issues, repository stats).
+- **User-Centric Reporting:**Prioritize visual and textual summaries that are easily digestible by non-technical recruiters and provide drill-down options for engineering managers.
+
+### **Beyond MVP (Future Phases):**
+
+- **Commit Message Analysis:**Apply NLP techniques to evaluate commit messages for clarity, sentiment, and consistency—adding depth to the quality assessment.
+- **Static Code Analysis:**Integrate tools like linters (ESLint, Pylint) and code quality frameworks to provide insights into code quality, complexity, and test coverage.
+- **Deep Code Analysis:**Consider analyzing the actual code for adherence to best practices, code smells, or architectural patterns to refine the Impact Score further.
+
+---
+
+## 9. Long-Term Roadmap
+
+### **Phase 1 (0–6 Months):**
+
+- **MVP Launch:**Complete GitHub API integration, develop the core scoring engine, and build the basic dashboards for recruiters and engineering managers.
+- **Beta Testing:**Launch with select recruiting agencies for initial feedback.
+
+### **Phase 2 (6–12 Months):**
+
+- **Advanced Code & Commit Analysis:**Start integrating commit message analysis and basic static code quality checks.
+- **Enhanced Dashboard Functionality:**Introduce multi-candidate comparison, advanced filters, and historical trends.
+- **Broader Platform Integration:**Expand to include GitLab and potentially Bitbucket data.
+
+### **Phase 3 (12–18+ Months):**
+
+- **Machine Learning Enhancements:**Use ML models trained on hiring outcomes to refine scoring.
+- **Internal Performance Analytics:**Develop modules for analyzing internal code repositories and collaboration tools (e.g., SharePoint, internal Git).
+- **Mobile App & Enterprise Integration:**Launch mobile applications and deeper ATS/HR system integrations.
+
+---
+
+## 10. Success Metrics & KPIs
+
+### **Product Success Metrics:**
+
+- **User Adoption:**Number of assessments/reports generated per month and active user growth (recruiters & engineering managers).
+- **Engagement:**Average time spent on dashboards and frequency of report downloads/shares.
+- **Outcome Correlation:**Correlation between Impact Scores and successful hires (via post-hire surveys).
+
+### **Technical Metrics:**
+
+- API latency and uptime.
+- Data freshness and synchronization rates.
+- Scalability under high request volumes.
+
+---
+
+## 11. Risks & Mitigation Strategies
+
+| **Risk** | **Mitigation Strategy** |
+| --- | --- |
+| **Gaming the System:** | Combine multiple metrics to reduce overemphasis on any single factor. |
+| **GitHub API Rate Limits:** | Use OAuth tokens and asynchronous job queues (Celery) to manage requests. |
+| **Bias Toward Popular Repositories:** | Normalize scores by repository age, size, and activity level. |
+| **False Positives in Analysis:** | Implement a feedback mechanism for users to flag discrepancies and continuously refine the scoring model. |
+
+---
+
+## 12. Ethical Considerations
+
+- **Transparency:**Clearly explain the scoring logic and provide breakdowns in plain language.
+- **Privacy:**Analyze only public data (unless explicit permissions are provided) and adhere to GDPR and other privacy regulations.
+- **Bias Mitigation:**Avoid penalizing candidates who focus on private repositories or whose contributions fall outside typical open-source activity. Allow for manual overrides when necessary.
+
+---
+
+## 13. Launch Plan
+
+### **Beta Testing:**
+
+- **Partners:**Collaborate with 5–10 tech recruiting agencies to pilot the MVP.
+- **Pilot Program:**Offer a free tier for early adopters to gather feedback and iterate quickly.
+
+### **Pricing Strategy:**
+
+- **Freemium Model:**
+    - **Free Tier:**Limited reports per month (e.g., 5 assessments) with basic metrics.
+    - **Pro Tier:**~$49/month for unlimited reports, advanced analytics, and detailed dashboards.
+    - **Enterprise Tier:**Custom pricing with full ATS integrations, dedicated support, and SLAs.
