@@ -402,7 +402,7 @@ def aggregate_user_data(username, github_data):
             logger.error(f"User data not found in GraphQL response for {username}")
             return {'error': f'User not found'}
         
-        # Basic user info
+        # Basic user info - always store this even if user has zero activity
         result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio']})
         result['followers'] = user_data.get('followers', {}).get('totalCount', 0) if user_data.get('followers') is not None else 0
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
@@ -472,7 +472,7 @@ def aggregate_user_data(username, github_data):
 
             repo_impacts.append(repo_impact)
             
-            # Store repository sub-metrics
+            # Store repository sub-metrics - now including all technical and ecosystem impact metrics
             repo_metrics = {
                 'name': repo.get('name'),
                 'stars': stars,
@@ -491,11 +491,28 @@ def aggregate_user_data(username, github_data):
                 'repo_tech_impact': repo_tech_impact,
                 'popularity': popularity,
                 'repo_eco_impact': repo_eco_impact,
-                'repo_impact': repo_impact
+                'repo_impact': repo_impact,
+                # Store the component metrics used in calculations
+                'technical_impact_components': {
+                    'contribution_ratio': contribution_ratio,
+                    'contribution_ratio_exponent': CONTRIBUTION_RATIO_EXPONENT,
+                    'collab_factor': collab_factor,
+                    'code_quality': code_quality,
+                    'pr_acceptance_weight': TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'],
+                    'review_activity_weight': TECHNICAL_IMPACT_WEIGHTS['review_activity'],
+                    'review_activity_normalization': REVIEW_ACTIVITY['normalization_factor']
+                },
+                'ecosystem_impact_components': {
+                    'stars': stars,
+                    'forks': forks,
+                    'popularity_formula': f"({stars} + 0.1 * {forks})^0.5 = {popularity}",
+                    'contribution_ratio': contribution_ratio
+                }
             }
             
             result['metrics']['repositories'].append(repo_metrics)
             
+        # Calculate repos_impact even if repo_impacts is empty (will be 0)
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
         
         # Store repos_impact sub-metrics
@@ -504,7 +521,11 @@ def aggregate_user_data(username, github_data):
             'average_impact': result['contributions']['repos_impact'],
             'max_impact': max(repo_impacts) if repo_impacts else 0,
             'min_impact': min(repo_impacts) if repo_impacts else 0,
-            'median_impact': np.median(repo_impacts) if repo_impacts else 0
+            'median_impact': np.median(repo_impacts) if repo_impacts else 0,
+            'impact_weights': {
+                'technical': REPO_IMPACT_WEIGHTS['technical'],
+                'ecosystem': REPO_IMPACT_WEIGHTS['ecosystem']
+            }
         }
 
         # Consistency calculation
@@ -532,6 +553,14 @@ def aggregate_user_data(username, github_data):
             'total_contributions': total_contributions,
             'avg_contributions_per_active_day': total_contributions / active_days if active_days else 0
         }
+        
+        # Add a flag to indicate if this is a user with zero activity
+        result['has_activity'] = (
+            result['contributions']['pulls'] > 0 or
+            result['contributions']['commits'] > 0 or
+            result['contributions']['reviews'] > 0 or
+            result['contributions']['issues'] > 0
+        )
         
         return result
     except Exception as e:
@@ -585,7 +614,7 @@ def fetch_all_data(username):
                   }
                 }
               }
-              commitContributionsByRepository(maxRepositories: 50) {
+              commitContributionsByRepository(maxRepositories: 20) {
                 repository {
                   name
                 }
@@ -594,7 +623,7 @@ def fetch_all_data(username):
                 }
               }
             }
-            repositories(first: 50, orderBy: {field: STARGAZERS, direction: DESC}) {
+            repositories(first: 20, orderBy: {field: STARGAZERS, direction: DESC}) {
               totalCount
               nodes {
                 name

@@ -215,7 +215,8 @@ def sample_users_sqlite(github_db_path, batch_size, existing_users=None):
 
 def sample_users_postgres(host=DEFAULT_PG_HOST, port=DEFAULT_PG_PORT, 
                          user=DEFAULT_PG_USER, password=DEFAULT_PG_PASSWORD, 
-                         dbname=DEFAULT_PG_DB, batch_size=100, existing_users=None):
+                         dbname=DEFAULT_PG_DB, batch_size=100, existing_users=None,
+                         user_type='User'):
     """
     Sample users from the PostgreSQL GitHub database.
     
@@ -227,6 +228,7 @@ def sample_users_postgres(host=DEFAULT_PG_HOST, port=DEFAULT_PG_PORT,
         dbname: PostgreSQL database name
         batch_size: Number of users to sample
         existing_users: Set of usernames to skip
+        user_type: Type of users to sample ('User' or 'Organization')
         
     Returns:
         List of user dictionaries with 'id' and 'login' keys
@@ -236,11 +238,11 @@ def sample_users_postgres(host=DEFAULT_PG_HOST, port=DEFAULT_PG_PORT,
     
     with postgres_connection(host, port, user, password, dbname) as conn:
         with conn.cursor(cursor_factory=DictCursor) as cursor:
-            # Get total user count and ID range
-            cursor.execute('SELECT COUNT(*), MIN(id), MAX(id) FROM github_users')
+            # Get total user count and ID range for the specified user type
+            cursor.execute('SELECT COUNT(*), MIN(id), MAX(id) FROM github_users WHERE type = %s', (user_type,))
             total_count, min_id, max_id = cursor.fetchone()
             
-            logger.info(f"GitHub database contains {total_count:,} users with IDs from {min_id:,} to {max_id:,}")
+            logger.info(f"GitHub database contains {total_count:,} {user_type}s with IDs from {min_id:,} to {max_id:,}")
             
             # Create a weighted distribution favoring later users
             segments = 10
@@ -272,13 +274,13 @@ def sample_users_postgres(host=DEFAULT_PG_HOST, port=DEFAULT_PG_PORT,
                     # Get more users than needed to account for skipping existing users
                     extra_factor = 2  # Get 2x more users than needed
                     
-                    # Get random users from this segment
+                    # Get random users from this segment with the specified user type
                     cursor.execute('''
                         SELECT id, login FROM github_users 
-                        WHERE id BETWEEN %s AND %s
+                        WHERE id BETWEEN %s AND %s AND type = %s
                         ORDER BY RANDOM() 
                         LIMIT %s
-                    ''', (segment_start, segment_end, segment_count * extra_factor))
+                    ''', (segment_start, segment_end, user_type, segment_count * extra_factor))
                     
                     segment_users = []
                     for row in cursor:
