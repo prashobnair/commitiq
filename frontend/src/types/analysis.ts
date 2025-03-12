@@ -21,6 +21,30 @@ export interface Contributions {
   reviews: number;
 }
 
+export interface Metrics {
+  consistency?: {
+    active_days: number;
+    active_days_ratio: number;
+    active_weeks: number;
+    avg_contributions_per_active_day: number;
+    total_contributions: number;
+    total_days: number;
+    total_weeks: number;
+  };
+  repos_impact?: {
+    average_impact: number;
+    impact_weights: {
+      ecosystem: number;
+      technical: number;
+    };
+    max_impact: number;
+    median_impact: number;
+    min_impact: number;
+    repo_count: number;
+  };
+  repositories?: any[]; // Array of repository metrics
+}
+
 export interface Analysis {
   username: string;
   merged_prs: number;
@@ -32,6 +56,16 @@ export interface Analysis {
   consistency: number;
   repos: Repository[];
   contributions?: Contributions;
+  metrics?: Metrics;
+  bio?: string | null;
+  company?: string | null;
+  email?: string;
+  followers?: number;
+  following?: number;
+  has_activity?: boolean;
+  location?: string;
+  name?: string;
+  url?: string | null;
 }
 
 export interface AnalysisResponse {

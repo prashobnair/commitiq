@@ -186,6 +186,37 @@ const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: str
   return { strengths, considerations };
 };
 
+// Helper function to format date string
+const formatDate = (dateString: string | undefined): string => {
+  if (!dateString) return 'N/A';
+  
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch (e) {
+    return 'N/A';
+  }
+};
+
+// Helper function to map repository data from backend format to our component format
+const mapRepositories = (metrics: any): Repository[] => {
+  if (!metrics || !metrics.repositories || !Array.isArray(metrics.repositories)) {
+    return [];
+  }
+  
+  return metrics.repositories.map((repo: any) => ({
+    name: repo.name || 'Unknown Repository',
+    url: `https://github.com/${repo.name}` || '#',
+    stars: repo.stars || 0,
+    forks: repo.forks || 0,
+    num_contributors: repo.collaborators || 0,
+    commit_frequency: repo.total_commits > 0 ? `${(repo.developer_commits / repo.total_commits * 100).toFixed(1)}%` : 'N/A',
+    last_updated: 'N/A', // Not available in the API response
+    num_commits: repo.developer_commits || 0,
+    impact_score: repo.repo_impact || 0
+  }));
+};
+
 const AnalysisResults: React.FC<Props> = ({ data }) => {
   const theme = useTheme();
 
@@ -209,6 +240,9 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
   const consistency = contributions.consistency;
   const repos_impact = contributions.repos_impact;
 
+  // Map repositories from the metrics data
+  const repositories = mapRepositories(data.analysis.metrics);
+
   // Generate summary and insights
   const summary = generateSummary(data);
   const overallRating = getOverallRating(data.impact_score || 0);
@@ -224,7 +258,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
       color: getRating(pulls, 'prs').color,
     },
     {
-      title: 'Issues Created',
+      title: 'Issues Raised',
       value: issues,
       description: 'Problem identification',
       icon: BugReport,
@@ -409,7 +443,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
         {/* Metrics */}
         <Grid item xs={12}>
           <Typography variant="h5" gutterBottom sx={{ mt: 2, mb: 3, fontWeight: 600 }}>
-            Contribution Metrics
+            Key Metrics
           </Typography>
           <Grid container spacing={3}>
             {metrics.map((metric, index) => (
@@ -472,100 +506,102 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
         </Grid>
 
         {/* Repositories */}
-        <Grid item xs={12}>
-          <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
-            Top Repository Contributions
-          </Typography>
-          <Grid container spacing={3}>
-            {(data.analysis.repos || [])
-              .sort((a, b) => b.impact_score - a.impact_score)
-              .slice(0, 4)
-              .map((repo, index) => (
-                <Grid item xs={12} md={6} key={index}>
-                  <Card sx={{ borderRadius: 3 }}>
-                    <CardContent sx={{ p: 3 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                        <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                          <Link
-                            href={repo.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ textDecoration: 'none' }}
-                          >
-                            {repo.name}
-                          </Link>
-                        </Typography>
-                        <Chip 
-                          label={`Impact: ${repo.impact_score.toFixed(2)}`}
-                          color="primary"
-                          size="small"
-                        />
-                      </Box>
-                      
-                      <Grid container spacing={2}>
-                        <Grid item xs={6} sm={3}>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <Star sx={{ color: 'warning.main', mb: 1 }} />
-                            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                              {repo.stars || 0}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary">
-                              Stars
-                            </Typography>
-                          </Box>
+        {repositories.length > 0 && (
+          <Grid item xs={12}>
+            <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
+              Top Repository Contributions
+            </Typography>
+            <Grid container spacing={3}>
+              {repositories
+                .sort((a, b) => b.impact_score - a.impact_score)
+                .slice(0, 4)
+                .map((repo, index) => (
+                  <Grid item xs={12} md={6} key={index}>
+                    <Card sx={{ borderRadius: 3 }}>
+                      <CardContent sx={{ p: 3 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                            <Link
+                              href={repo.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ textDecoration: 'none' }}
+                            >
+                              {repo.name}
+                            </Link>
+                          </Typography>
+                          <Chip 
+                            label={`Impact: ${repo.impact_score.toFixed(2)}`}
+                            color="primary"
+                            size="small"
+                          />
+                        </Box>
+                        
+                        <Grid container spacing={2}>
+                          <Grid item xs={6} sm={3}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                              <Star sx={{ color: 'warning.main', mb: 1 }} />
+                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                {repo.stars || 0}
+                              </Typography>
+                              <Typography variant="body2" color="textSecondary">
+                                Stars
+                              </Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={6} sm={3}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                              <MergeType sx={{ color: 'primary.main', mb: 1 }} />
+                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                {repo.forks || 0}
+                              </Typography>
+                              <Typography variant="body2" color="textSecondary">
+                                Forks
+                              </Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={6} sm={3}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                              <Person sx={{ color: 'info.main', mb: 1 }} />
+                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                {repo.num_contributors || 0}
+                              </Typography>
+                              <Typography variant="body2" color="textSecondary">
+                                Contributors
+                              </Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={6} sm={3}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                              <Commit sx={{ color: 'success.main', mb: 1 }} />
+                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                {repo.num_commits || 0}
+                              </Typography>
+                              <Typography variant="body2" color="textSecondary">
+                                Commits
+                              </Typography>
+                            </Box>
+                          </Grid>
                         </Grid>
-                        <Grid item xs={6} sm={3}>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <MergeType sx={{ color: 'primary.main', mb: 1 }} />
-                            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                              {repo.forks || 0}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary">
-                              Forks
-                            </Typography>
-                          </Box>
-                        </Grid>
-                        <Grid item xs={6} sm={3}>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <Person sx={{ color: 'info.main', mb: 1 }} />
-                            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                              {repo.num_contributors || 0}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary">
-                              Contributors
-                            </Typography>
-                          </Box>
-                        </Grid>
-                        <Grid item xs={6} sm={3}>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <Commit sx={{ color: 'success.main', mb: 1 }} />
-                            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                              {repo.num_commits || 0}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary">
-                              Commits
-                            </Typography>
-                          </Box>
-                        </Grid>
-                      </Grid>
-                      
-                      <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Chip
-                          label={`Frequency: ${repo.commit_frequency || 'N/A'}`}
-                          color="secondary"
-                          size="small"
-                          sx={{ mr: 1 }}
-                        />
-                        <Typography variant="body2" color="textSecondary">
-                          Last updated: {repo.last_updated || 'N/A'}
-                        </Typography>
-                      </Box>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              ))}
+                        
+                        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Chip
+                            label={`Frequency: ${repo.commit_frequency || 'N/A'}`}
+                            color="secondary"
+                            size="small"
+                            sx={{ mr: 1 }}
+                          />
+                          <Typography variant="body2" color="textSecondary">
+                            Last updated: {repo.last_updated || 'N/A'}
+                          </Typography>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+            </Grid>
           </Grid>
-        </Grid>
+        )}
         
         {/* Action Buttons */}
         <Grid item xs={12}>

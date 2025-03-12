@@ -380,6 +380,7 @@ def aggregate_user_data(username, github_data):
         # Initialize results dictionary
         result = {
             'username': username,
+            'raw_data': github_data,
             'contributions': {
                 'pulls': 0,
                 'commits': 0,
@@ -403,7 +404,7 @@ def aggregate_user_data(username, github_data):
             return {'error': f'User not found'}
         
         # Basic user info - always store this even if user has zero activity
-        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio']})
+        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio', 'avatarUrl']})
         result['followers'] = user_data.get('followers', {}).get('totalCount', 0) if user_data.get('followers') is not None else 0
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
         
@@ -596,6 +597,7 @@ def fetch_all_data(username):
             location
             company
             bio
+            avatarUrl
             followers {
               totalCount
             }
