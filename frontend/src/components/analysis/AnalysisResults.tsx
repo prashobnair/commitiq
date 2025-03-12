@@ -30,6 +30,7 @@ import {
   Person,
   Star,
   BarChart,
+  Code as CodeIcon,
 } from '@mui/icons-material';
 import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../types/analysis';
 
@@ -113,11 +114,14 @@ const generateSummary = (data: AnalysisResponse): string => {
   const consistency = contributions.consistency;
   const reviews = contributions.reviews;
   
+  // Get developer name or username
+  const developerName = data.analysis.name || data.analysis.username;
+  
   const prRating = getRating(pulls, 'prs');
   const commitRating = getRating(commits, 'commits');
   const consistencyRating = getRating(consistency, 'consistency');
   
-  return `This developer has made ${commits} commits and ${pulls} pull requests, showing ${prRating.label.toLowerCase()} collaboration. Their consistency is ${(consistency * 100).toFixed(1)}%, indicating ${consistencyRating.label.toLowerCase()} regular activity. With ${reviews} code reviews, they actively engage in code discussions. Overall, they're a ${commitRating.label.toLowerCase()} contributor who ${pulls > 30 ? 'frequently' : 'occasionally'} participates in various projects.`;
+  return `${developerName} has made ${commits} commits and ${pulls} pull requests, showing ${prRating.label.toLowerCase()} collaboration. Their consistency is ${(consistency * 100).toFixed(1)}%, indicating ${consistencyRating.label.toLowerCase()} regular activity. With ${reviews} code reviews, they actively engage in code discussions. Overall, they're a ${commitRating.label.toLowerCase()} contributor who ${pulls > 30 ? 'frequently' : 'occasionally'} participates in various projects.`;
 };
 
 // Helper function to determine overall rating
@@ -210,9 +214,9 @@ const mapRepositories = (metrics: any): Repository[] => {
     stars: repo.stars || 0,
     forks: repo.forks || 0,
     num_contributors: repo.collaborators || 0,
-    commit_frequency: repo.total_commits > 0 ? `${(repo.developer_commits / repo.total_commits * 100).toFixed(1)}%` : 'N/A',
+    commit_frequency: repo.primary_language || 'N/A', // Using this field for language now
     last_updated: 'N/A', // Not available in the API response
-    num_commits: repo.developer_commits || 0,
+    num_commits: repo.contribution_ratio ? (repo.contribution_ratio * 100).toFixed(1) + '%' : '0%', // Using this for contribution ratio
     impact_score: repo.repo_impact || 0
   }));
 };
@@ -308,6 +312,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
               color: 'white',
             }}>
               <Avatar 
+                src={data.analysis.avatar_url}
                 sx={{ 
                   width: 80, 
                   height: 80, 
@@ -317,13 +322,18 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                   border: `2px solid ${theme.palette.primary.light}`,
                 }}
               >
-                <Person sx={{ fontSize: 40 }} />
+                {!data.analysis.avatar_url && <Person sx={{ fontSize: 40 }} />}
               </Avatar>
               <Box>
-                <Typography variant="h4" fontWeight="bold">
+                {data.analysis.name && (
+                  <Typography variant="h4" fontWeight="bold">
+                    {data.analysis.name}
+                  </Typography>
+                )}
+                <Typography variant={data.analysis.name ? 'h6' : 'h4'} sx={{ opacity: data.analysis.name ? 0.9 : 1, fontWeight: data.analysis.name ? 'normal' : 'bold' }}>
                   {data.analysis.username || 'Developer'}
                 </Typography>
-                <Typography variant="h6" sx={{ opacity: 0.9 }}>
+                <Typography variant="h6" sx={{ opacity: 0.9, mt: 1 }}>
                   {overallRating}
                 </Typography>
               </Box>
@@ -567,7 +577,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                                 {repo.num_contributors || 0}
                               </Typography>
                               <Typography variant="body2" color="textSecondary">
-                                Contributors
+                                Collaborators
                               </Typography>
                             </Box>
                           </Grid>
@@ -575,10 +585,10 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                               <Commit sx={{ color: 'success.main', mb: 1 }} />
                               <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.num_commits || 0}
+                                {repo.num_commits}
                               </Typography>
                               <Typography variant="body2" color="textSecondary">
-                                Commits
+                                Contribution
                               </Typography>
                             </Box>
                           </Grid>
@@ -586,9 +596,10 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                         
                         <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Chip
-                            label={`Frequency: ${repo.commit_frequency || 'N/A'}`}
+                            label={`Language: ${repo.commit_frequency}`}
                             color="secondary"
                             size="small"
+                            icon={<CodeIcon fontSize="small" />}
                             sx={{ mr: 1 }}
                           />
                           <Typography variant="body2" color="textSecondary">

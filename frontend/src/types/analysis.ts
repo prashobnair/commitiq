@@ -66,6 +66,7 @@ export interface Analysis {
   location?: string;
   name?: string;
   url?: string | null;
+  avatar_url?: string;
 }
 
 export interface AnalysisResponse {
