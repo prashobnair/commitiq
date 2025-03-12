@@ -88,27 +88,18 @@ def check_rate_limits():
             if wait_time > 0:
                 logger.warning(f"All tokens close to rate limit. Waiting for {wait_time:.1f} seconds until reset")
                 time.sleep(wait_time)
-                # After waiting, check if we have sufficient remaining calls
-                for t in github_client.tokens:
-                    if github_client.token_rate_limits[t]['remaining'] > 100:
-                        return True
-                return False  # If still no token has sufficient calls
+                return True
         else:
             # Single token case
             if remaining < 100:
                 wait_time = max(reset_time - time.time(), 10)
                 logger.warning(f"Rate limit low ({remaining} remaining). Waiting for {wait_time:.1f} seconds until reset")
                 time.sleep(wait_time)
-                # After waiting, check if we have sufficient remaining calls
-                token = github_client.get_token()
-                remaining = github_client.token_rate_limits[token]['remaining']
-                if remaining < 100:
-                    return False
             
         return True
     except Exception as e:
         logger.error(f"Error checking rate limits: {e}")
-        return False  # Return False on error to be safe
+        return True  # Continue anyway, the GitHub client will handle rate limits internally
 
 # Constants
 OUTPUT_DIR = Path(__file__).parent / "data"
@@ -587,12 +578,6 @@ def process_user(username):
     try:
         logger.info(f"Processing user {username}")
         
-        # Check rate limits before processing
-        if not check_rate_limits():
-            logger.warning(f"Rate limit reached, skipping user {username}")
-            time.sleep(60)  # Wait a minute before returning to allow rate limit to reset
-            return None
-        
         # Collect user data
         user_data = collect_user_data(username)
         if not user_data:
@@ -704,8 +689,6 @@ def main():
     parser.add_argument('--db-user', type=str, default=None, help='Database user')
     parser.add_argument('--db-password', type=str, default=None, help='Database password')
     parser.add_argument('--github-token', type=str, default=None, help='GitHub API token')
-    parser.add_argument('--sleep', type=float, default=1.0, help='Sleep time between API calls (seconds)')
-    parser.add_argument('--batch-pause', type=float, default=60.0, help='Sleep time between batches (seconds)')
     args = parser.parse_args()
     
     # Set environment variables if provided
@@ -738,7 +721,7 @@ def main():
         logger.info("Checking GitHub API rate limits before processing batch...")
         if not check_rate_limits():
             logger.warning("Rate limit check failed. Waiting before continuing...")
-            time.sleep(args.batch_pause)  # Use configurable batch pause
+            time.sleep(60)  # Wait a minute and try again
             continue
         
         # Sample users from GitHub database
@@ -775,10 +758,6 @@ def main():
         # Update existing users
         existing_users = get_existing_users()
         batch_num += 1
-        
-        # Sleep between batches to help avoid rate limits
-        logger.info(f"Sleeping for {args.batch_pause} seconds between batches...")
-        time.sleep(args.batch_pause)
 
 if __name__ == "__main__":
     main() 
