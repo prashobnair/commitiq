@@ -31,7 +31,7 @@ import {
   Star,
   BarChart,
 } from '@mui/icons-material';
-import { AnalysisResponse, MetricCard, Repository } from '../../types/analysis';
+import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../types/analysis';
 
 interface Props {
   data: AnalysisResponse;
@@ -94,14 +94,30 @@ const getColorFromTheme = (theme: any, colorString: string): string => {
   return theme.palette.primary.main;
 };
 
+// Default empty contributions object with all values set to 0
+const emptyContributions: Contributions = {
+  pulls: 0,
+  commits: 0,
+  consistency: 0,
+  reviews: 0,
+  issues: 0,
+  repos_impact: 0
+};
+
 // Helper function to generate a summary of the developer's profile
 const generateSummary = (data: AnalysisResponse): string => {
-  const { analysis } = data;
-  const prRating = getRating(analysis.merged_prs || 0, 'prs');
-  const commitRating = getRating(analysis.total_commits || 0, 'commits');
-  const consistencyRating = getRating(analysis.consistency || 0, 'consistency');
+  // Extract contribution data from the correct location in the response
+  const contributions = data.analysis.contributions || emptyContributions;
+  const pulls = contributions.pulls;
+  const commits = contributions.commits;
+  const consistency = contributions.consistency;
+  const reviews = contributions.reviews;
   
-  return `This developer has made ${analysis.total_commits || 0} commits and ${analysis.merged_prs || 0} pull requests, showing ${prRating.label.toLowerCase()} collaboration. Their consistency is ${(analysis.consistency * 100 || 0).toFixed(1)}%, indicating ${consistencyRating.label.toLowerCase()} regular activity. With ${analysis.code_reviews || 0} code reviews, they actively engage in code discussions. Overall, they're a ${commitRating.label.toLowerCase()} contributor who ${analysis.merged_prs > 30 ? 'frequently' : 'occasionally'} participates in various projects.`;
+  const prRating = getRating(pulls, 'prs');
+  const commitRating = getRating(commits, 'commits');
+  const consistencyRating = getRating(consistency, 'consistency');
+  
+  return `This developer has made ${commits} commits and ${pulls} pull requests, showing ${prRating.label.toLowerCase()} collaboration. Their consistency is ${(consistency * 100).toFixed(1)}%, indicating ${consistencyRating.label.toLowerCase()} regular activity. With ${reviews} code reviews, they actively engage in code discussions. Overall, they're a ${commitRating.label.toLowerCase()} contributor who ${pulls > 30 ? 'frequently' : 'occasionally'} participates in various projects.`;
 };
 
 // Helper function to determine overall rating
@@ -116,37 +132,44 @@ const getOverallRating = (score: number): string => {
 
 // Helper function to identify strengths and considerations
 const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: string[], considerations: string[] } => {
-  const { analysis } = data;
+  // Extract contribution data from the correct location in the response
+  const contributions = data.analysis.contributions || emptyContributions;
+  const pulls = contributions.pulls;
+  const commits = contributions.commits;
+  const consistency = contributions.consistency;
+  const reviews = contributions.reviews;
+  const repos_impact = contributions.repos_impact;
+  
   const strengths: string[] = [];
   const considerations: string[] = [];
   
   // Analyze strengths
-  if (analysis.merged_prs > 30) {
+  if (pulls > 30) {
     strengths.push('High number of pull requests, indicating strong collaboration');
   }
   
-  if (analysis.consistency > 0.7) {
-    strengths.push(`Excellent consistency (${(analysis.consistency * 100).toFixed(1)}% active days)`);
+  if (consistency > 0.7) {
+    strengths.push(`Excellent consistency (${(consistency * 100).toFixed(1)}% active days)`);
   }
   
-  if (analysis.code_reviews > 20) {
+  if (reviews > 20) {
     strengths.push('Frequent code reviews, showing willingness to provide feedback');
   }
   
-  if (analysis.total_commits > 200) {
+  if (commits > 200) {
     strengths.push('Significant number of commits, demonstrating active development');
   }
   
   // Analyze considerations
-  if (analysis.project_impact < 0.05) {
+  if (repos_impact < 0.05) {
     considerations.push('Lower repository impact score—contributions may be in less popular repos');
   }
   
-  if (analysis.merged_prs < 10 && analysis.total_commits > 100) {
+  if (pulls < 10 && commits > 100) {
     considerations.push('High commits but low PRs may indicate solo work rather than collaboration');
   }
   
-  if (analysis.consistency < 0.5) {
+  if (consistency < 0.5) {
     considerations.push('Inconsistent contribution pattern may indicate sporadic engagement');
   }
   
@@ -177,16 +200,14 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
     );
   }
 
-  // Extract contribution data
-  const { 
-    merged_prs = 0, 
-    issues_created = 0, 
-    issues_resolved = 0, 
-    code_reviews = 0, 
-    total_commits = 0, 
-    project_impact = 0,
-    consistency = 0
-  } = data.analysis;
+  // Extract contribution data from the correct location in the response
+  const contributions = data.analysis.contributions || emptyContributions;
+  const pulls = contributions.pulls;
+  const issues = contributions.issues;
+  const reviews = contributions.reviews;
+  const commits = contributions.commits;
+  const consistency = contributions.consistency;
+  const repos_impact = contributions.repos_impact;
 
   // Generate summary and insights
   const summary = generateSummary(data);
@@ -197,31 +218,31 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
   const metrics: MetricCard[] = [
     {
       title: 'Pull Requests',
-      value: merged_prs,
+      value: pulls,
       description: 'Collaborative contributions',
       icon: MergeType,
-      color: getRating(merged_prs, 'prs').color,
+      color: getRating(pulls, 'prs').color,
     },
     {
       title: 'Issues Created',
-      value: issues_created,
+      value: issues,
       description: 'Problem identification',
       icon: BugReport,
-      color: getRating(issues_created, 'issues').color,
+      color: getRating(issues, 'issues').color,
     },
     {
       title: 'Code Reviews',
-      value: code_reviews,
+      value: reviews,
       description: 'Feedback & mentorship',
       icon: RateReview,
-      color: getRating(code_reviews, 'reviews').color,
+      color: getRating(reviews, 'reviews').color,
     },
     {
       title: 'Total Commits',
-      value: total_commits,
+      value: commits,
       description: 'Code contributions',
       icon: Commit,
-      color: getRating(total_commits, 'commits').color,
+      color: getRating(commits, 'commits').color,
     },
     {
       title: 'Consistency',
@@ -232,10 +253,10 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
     },
     {
       title: 'Project Impact',
-      value: (project_impact).toFixed(3),
+      value: (repos_impact).toFixed(3),
       description: 'Influence on repositories',
       icon: TrendingUp,
-      color: getRating(project_impact, 'impact').color,
+      color: getRating(repos_impact, 'impact').color,
     },
   ];
 

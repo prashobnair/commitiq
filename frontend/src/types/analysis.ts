@@ -12,6 +12,15 @@ export interface Repository {
   impact_score: number;
 }
 
+export interface Contributions {
+  commits: number;
+  consistency: number;
+  issues: number;
+  pulls: number;
+  repos_impact: number;
+  reviews: number;
+}
+
 export interface Analysis {
   username: string;
   merged_prs: number;
@@ -22,6 +31,7 @@ export interface Analysis {
   project_impact: number;
   consistency: number;
   repos: Repository[];
+  contributions?: Contributions;
 }
 
 export interface AnalysisResponse {
