@@ -20,6 +20,7 @@ export interface Analysis {
   code_reviews: number;
   total_commits: number;
   project_impact: number;
+  consistency: number;
   repos: Repository[];
 }
 
