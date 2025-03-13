@@ -216,18 +216,7 @@ const LandingPage: React.FC = () => {
                   </Button>
                 </Paper>
 
-                <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    Trusted by top tech recruiters at
-                  </Typography>
-                  <Stack direction="row" spacing={2}>
-                    {['Google', 'Microsoft', 'Amazon'].map((company) => (
-                      <Typography key={company} variant="body2" sx={{ fontWeight: 600 }}>
-                        {company}
-                      </Typography>
-                    ))}
-                  </Stack>
-                </Box>
+                
               </Grid>
               <Grid item xs={12} md={5} sx={{ display: { xs: 'none', md: 'block' } }}>
                 <Box

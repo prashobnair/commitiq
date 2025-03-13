@@ -73,8 +73,8 @@ const getRating = (value: number, type: string): { label: string; color: string 
       return { label: 'Inconsistent', color: 'error.light' };
     
     case 'impact':
-      if (value > 0.1) return { label: 'High', color: 'success.main' };
-      if (value > 0.05) return { label: 'Above Average', color: 'success.light' };
+      if (value > 0.05) return { label: 'High', color: 'success.main' };
+      if (value > 0.03) return { label: 'Above Average', color: 'success.light' };
       if (value > 0.01) return { label: 'Moderate', color: 'warning.main' };
       return { label: 'Low', color: 'error.light' };
     
@@ -167,7 +167,7 @@ const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: str
   }
   
   // Analyze considerations
-  if (repos_impact < 0.05) {
+  if (repos_impact < 0.03) {
     considerations.push('Lower repository impact score—contributions may be in less popular repos');
   }
   
@@ -275,12 +275,18 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
       if (typeof lang === 'object' && lang !== null) {
         // Use name as the primary field, fallback to language if name is not available
         const languageName = lang.name || lang.language || 'Unknown';
-        const percentage = typeof lang.percentage === 'number' ? lang.percentage : 
-                           typeof lang.percent === 'number' ? lang.percent : 0;
+        
+        // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
+        let percentage = 0;
+        if (typeof lang.percentage === 'number') {
+          percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+        } else if (typeof lang.percent === 'number') {
+          percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+        }
         
         return {
           language: languageName,
-          percentage: percentage
+          percentage: percentage / 100 // Store as decimal for consistent handling
         };
       }
       // Default case for any other format
@@ -295,10 +301,22 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
       
       if (languagesData && Array.isArray(languagesData)) {
         console.log("Found languages in metrics:", languagesData);
-        topLanguages = languagesData.map((lang: any) => ({
-          language: lang.language || lang.name || 'Unknown',
-          percentage: lang.percentage || lang.percent || 0
-        }));
+        topLanguages = languagesData.map((lang: any) => {
+          const languageName = lang.language || lang.name || 'Unknown';
+          
+          // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
+          let percentage = 0;
+          if (typeof lang.percentage === 'number') {
+            percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+          } else if (typeof lang.percent === 'number') {
+            percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+          }
+          
+          return {
+            language: languageName,
+            percentage: percentage / 100 // Store as decimal for consistent handling
+          };
+        });
       }
     } catch (error) {
       console.error("Error processing languages data:", error);
@@ -369,7 +387,8 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
     },
     {
       title: 'Project Impact',
-      value: (repos_impact).toFixed(3),
+      value: repos_impact,  // Use the raw value instead of formatted string
+      displayValue: (repos_impact).toFixed(3),  // Add a display value for rendering
       description: 'Influence on repositories',
       icon: TrendingUp,
       color: getRating(repos_impact, 'impact').color,
@@ -419,59 +438,93 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
           </Card>
         </Grid>
 
-        {/* Impact Score */}
+        {/* Left Column - Impact Score and Top Languages */}
         <Grid item xs={12} md={6}>
-          <Card
-            sx={{
-              background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-              color: 'white',
-              position: 'relative',
-              overflow: 'hidden',
-              height: '100%',
-              borderRadius: 3,
-            }}
-          >
-            <CardContent sx={{ position: 'relative', zIndex: 1, p: 3 }}>
-              <Box
+          <Grid container spacing={3} sx={{ height: '100%' }}>
+            {/* Impact Score */}
+            <Grid item xs={12}>
+              <Card
                 sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  height: '100%',
+                  background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+                  color: 'white',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  borderRadius: 3,
                 }}
               >
-                <Typography variant="h6" gutterBottom>
-                  Overall Impact Score
-                </Typography>
-                <Typography variant="h1" component="div" sx={{ mb: 1, fontWeight: 'bold' }}>
-                  {(data.impact_score || 0).toFixed(1)}
-                </Typography>
-                <LinearProgress
-                  variant="determinate"
-                  value={Math.min(data.impact_score || 0, 100)}
-                  sx={{
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: 'rgba(255,255,255,0.2)',
-                    '& .MuiLinearProgress-bar': {
-                      backgroundColor: 'white',
-                    },
-                    mb: 2,
-                  }}
-                />
-                <Typography variant="body1" sx={{ mb: 2 }}>
-                  {overallRating}
-                </Typography>
-                <Divider sx={{ backgroundColor: 'rgba(255,255,255,0.2)', my: 2 }} />
-                <Typography variant="body2" sx={{ mt: 'auto' }}>
-                  This score represents the developer's overall impact based on contributions, 
-                  collaboration, consistency, and project influence.
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
+                <CardContent sx={{ position: 'relative', zIndex: 1, p: 3 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
+                    <Typography variant="h6" fontWeight="bold" gutterBottom>
+                      Overall Impact Score
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h2" component="div" sx={{ fontWeight: 'bold', mr: 2 }}>
+                        {(data.impact_score || 0).toFixed(1)}
+                      </Typography>
+                      <Box sx={{ flexGrow: 1 }}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={Math.min(data.impact_score || 0, 100)}
+                          sx={{
+                            height: 10,
+                            borderRadius: 5,
+                            backgroundColor: 'rgba(255,255,255,0.2)',
+                            '& .MuiLinearProgress-bar': {
+                              backgroundColor: 'white',
+                            },
+                            mb: 1,
+                          }}
+                        />
+                        <Typography variant="body1">
+                          {overallRating}
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <Divider sx={{ backgroundColor: 'rgba(255,255,255,0.2)', my: 2 }} />
+                    <Typography variant="body2">
+                      This score represents the developer's overall impact based on contributions, 
+                      collaboration, consistency, and project influence.
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+            
+            {/* Top Languages */}
+            {topLanguages && topLanguages.length > 0 && (
+              <Grid item xs={12}>
+                <Card sx={{ borderRadius: 3 }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Typography variant="h6" fontWeight="bold" gutterBottom>
+                      Top Languages
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {topLanguages.map((lang, index) => (
+                        <Chip
+                          key={index}
+                          label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
+                          size="small"
+                          sx={{
+                            bgcolor: `${theme.palette.primary.main}15`,
+                            color: theme.palette.primary.main,
+                            my: 0.5
+                          }}
+                        />
+                      ))}
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+            )}
+          </Grid>
         </Grid>
 
-        {/* Summary */}
+        {/* Right Column - Developer Summary */}
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%', borderRadius: 3 }}>
             <CardContent sx={{ p: 3 }}>
@@ -481,28 +534,6 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
               <Typography variant="body1" paragraph>
                 {summary}
               </Typography>
-              
-              {topLanguages && topLanguages.length > 0 && (
-                <>
-                  <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                    Top Languages
-                  </Typography>
-                  <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                    {topLanguages.map((lang, index) => (
-                      <Chip
-                        key={index}
-                        label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
-                        size="small"
-                        sx={{
-                          bgcolor: `${theme.palette.primary.main}15`,
-                          color: theme.palette.primary.main,
-                        }}
-                      />
-                    ))}
-                  </Box>
-                  <Divider sx={{ my: 2 }} />
-                </>
-              )}
               
               <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
                 Strengths
@@ -578,7 +609,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                           {metric.title}
                         </Typography>
                         <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-                          {metric.value}
+                          {metric.displayValue !== undefined ? metric.displayValue : metric.value}
                         </Typography>
                       </Box>
                     </Box>
@@ -590,7 +621,9 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                         label={getRating(
                           typeof metric.value === 'string' 
                             ? parseFloat(metric.value) / 100 
-                            : Number(metric.value), 
+                            : metric.title.toLowerCase().includes('impact')
+                              ? Number(metric.value) // Don't modify impact value
+                              : Number(metric.value), 
                           metric.title.toLowerCase().includes('pull') ? 'prs' : 
                           metric.title.toLowerCase().includes('issue') ? 'issues' :
                           metric.title.toLowerCase().includes('review') ? 'reviews' :

@@ -80,6 +80,7 @@ export interface AnalysisResponse {
 export interface MetricCard {
   title: string;
   value: number | string;
+  displayValue?: string;  // Optional display value for rendering
   description: string;
   icon: ElementType;
   color?: string;
