@@ -419,14 +419,14 @@ def aggregate_user_data(username, github_data):
         # Get weighted repository metrics
         repos = user_data.get('repositories', {}).get('nodes', [])
         repo_impacts = []
-        logger.info(f"Prashob:1")
+        
         # Calculate top languages used by the developer using actual language statistics
         language_usage = {}
         
         for repo in repos:
             if repo.get('isPrivate', False):
                 continue
-            logger.info(f"Prashob:1.1")   
+            
             # Get repository metrics
             stars = repo.get('stargazerCount', 0)
             forks = repo.get('forkCount', 0)
@@ -446,7 +446,7 @@ def aggregate_user_data(username, github_data):
             total_commits = repo.get('defaultBranchRef', {}).get('target', {}).get('history', {}).get('totalCount', 0) if repo.get('defaultBranchRef', {}) is not None else 0
             
             contribution_ratio = developer_commits / total_commits if total_commits > 0 else 0
-            logger.info(f"Prashob:1.2")
+            
             # Get language statistics for this repository
             languages_data = repo.get('languages', {})
             language_edges = languages_data.get('edges', [])
@@ -458,15 +458,21 @@ def aggregate_user_data(username, github_data):
                 if not language_name or language_size <= 0:
                     continue
                 
+                # Skip blacklisted languages
+                if language_name in LANGUAGE_BLACKLIST:
+                    continue
+                
                 # Weight language usage by code size and contribution ratio
                 weighted_size = language_size * contribution_ratio
                 
-                # Accumulate language usage
-                if language_name in language_usage:
-                    language_usage[language_name] += weighted_size
-                else:
-                    language_usage[language_name] = weighted_size
-            logger.info(f"Prashob:1.3")        
+                # Only add languages with non-zero weighted size
+                if weighted_size > 0:
+                    # Accumulate language usage
+                    if language_name in language_usage:
+                        language_usage[language_name] += weighted_size
+                    else:
+                        language_usage[language_name] = weighted_size
+            
             # Pull Request stats
             merged_pull_requests = repo.get('mergedPullRequests', {}).get('totalCount', 0)
             closed_pull_requests = repo.get('closedPullRequests', {}).get('totalCount', 0)
@@ -479,7 +485,7 @@ def aggregate_user_data(username, github_data):
                 pr.get('reviews', {}).get('totalCount', 0) + pr.get('comments', {}).get('totalCount', 0)
                 for pr in pull_request_nodes
             )
-            logger.info(f"Prashob:1.4")
+            
             # Calculate technical impact
             code_quality = (
                 TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'] * pr_acceptance +
@@ -497,7 +503,7 @@ def aggregate_user_data(username, github_data):
             )
 
             repo_impacts.append(repo_impact)
-            logger.info(f"Prashob:1.5")
+            
             # Store repository sub-metrics - now including all technical and ecosystem impact metrics
             repo_metrics = {
                 'name': repo.get('name'),
@@ -536,10 +542,10 @@ def aggregate_user_data(username, github_data):
                     'contribution_ratio': contribution_ratio
                 }
             }
-            logger.info(f"Prashob:1.6")
+            
             temp_metrics['repositories'].append(repo_metrics)
-            logger.info(f"Prashob:1.7")
-        logger.info(f"Prashob:2")
+            
+        
 
         # Calculate repos_impact even if repo_impacts is empty (will be 0)
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
@@ -585,7 +591,6 @@ def aggregate_user_data(username, github_data):
         else:
             result['contributions']['top_repositories'] = []
         
-        logger.info(f"Prashob:3")
         # Sort languages by usage and take top 5
         top_languages = sorted(
             [{'name': lang, 'usage': size} for lang, size in language_usage.items()],
@@ -602,7 +607,7 @@ def aggregate_user_data(username, github_data):
             
         result['contributions']['top_languages'] = top_languages
         
-        logger.info(f"Prashob:4")
+        
         # Consistency calculation
         weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
         active_weeks = sum(1 for week in weeks if any(
@@ -619,7 +624,7 @@ def aggregate_user_data(username, github_data):
                                  for week in weeks 
                                  for day in week.get('contributionDays', []))
         
-        logger.info(f"Prashob:5")
+        
         # Add a flag to indicate if this is a user with zero activity
         result['has_activity'] = (
             result['contributions']['pulls'] > 0 or
@@ -814,3 +819,77 @@ def calculate_impact_score(data):
     except Exception as e:
         logger.error(f"Scoring error: {str(e)}")
         return 0
+
+# Add this constant at the top of the file with other constants
+LANGUAGE_BLACKLIST = {
+    # Markup Languages
+    'HTML',
+    'XML',
+    'Markdown',
+    'TeX',
+    'Roff',
+    'Adblock Filter List',
+    'Rich Text Format',
+    
+    # Stylesheet Languages
+    'CSS',
+    'SCSS',
+    'Less',
+    
+    # Data Formats / Configuration
+    'JSON',
+    'YAML',
+    'INI',
+    'Properties',
+    'EditorConfig',
+    'TOML',
+    'CSV',
+    'TSV',
+    
+    # Shell Scripting
+    'Shell',
+    'PowerShell',
+    'Batchfile',
+    
+    # Build/Deployment/Infrastructure
+    'Dockerfile',
+    'Makefile',
+    'CMake',
+    'HCL',
+    'Nix',
+    'ApacheConf',
+    'QML',
+    'XSLT',
+    
+    # Editor/IDE Specific
+    'Vim Script',
+    'VimL',
+    'Emacs Lisp',
+    
+    # Specialized/Less Common
+    'Prolog',
+    'Mathematica',
+    'AutoHotkey',
+    'SourcePawn',
+    'Web Ontology Language',
+    'SQF',
+    'IDL',
+    'PostScript',
+    'M4',
+    'Coq',
+    'Standard ML',
+    'Gherkin',
+    'AutoIt',
+    'TSQL',
+    'PLSQL',
+    'OpenSCAD',
+    'BlitzBasic',
+    'xBase',
+    'FreeMarker',
+    'WebAssembly',
+    'Groff',
+    'Xtend',
+    'Max',
+    'Logos',
+    'Modelica'
+}

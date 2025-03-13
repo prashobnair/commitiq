@@ -440,94 +440,98 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
 
         {/* Left Column - Impact Score and Top Languages */}
         <Grid item xs={12} md={6}>
-          <Grid container spacing={3} sx={{ height: '100%' }}>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            height: '100%',
+            gap: 2 
+          }}>
             {/* Impact Score */}
-            <Grid item xs={12}>
-              <Card
-                sx={{
-                  background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-                  color: 'white',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  borderRadius: 3,
-                }}
-              >
-                <CardContent sx={{ position: 'relative', zIndex: 1, p: 3 }}>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                    }}
-                  >
-                    <Typography variant="h6" fontWeight="bold" gutterBottom>
-                      Overall Impact Score
-                    </Typography>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Typography variant="h2" component="div" sx={{ fontWeight: 'bold', mr: 2 }}>
-                        {(data.impact_score || 0).toFixed(1)}
-                      </Typography>
-                      <Box sx={{ flexGrow: 1 }}>
-                        <LinearProgress
-                          variant="determinate"
-                          value={Math.min(data.impact_score || 0, 100)}
-                          sx={{
-                            height: 10,
-                            borderRadius: 5,
-                            backgroundColor: 'rgba(255,255,255,0.2)',
-                            '& .MuiLinearProgress-bar': {
-                              backgroundColor: 'white',
-                            },
-                            mb: 1,
-                          }}
-                        />
-                        <Typography variant="body1">
-                          {overallRating}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Divider sx={{ backgroundColor: 'rgba(255,255,255,0.2)', my: 2 }} />
-                    <Typography variant="body2">
-                      This score represents the developer's overall impact based on contributions, 
-                      collaboration, consistency, and project influence.
+            <Card sx={{ 
+              borderRadius: 3,
+              background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+              color: 'white',
+              flexGrow: topLanguages && topLanguages.length > 0 ? 0 : 1
+            }}>
+              <CardContent sx={{ p: 3 }}>
+                <Typography variant="h6" fontWeight="bold" gutterBottom>
+                  Overall Impact Score
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h2" component="div" sx={{ fontWeight: 'bold', mr: 2 }}>
+                    {(data.impact_score || 0).toFixed(1)}
+                  </Typography>
+                  <Box sx={{ flexGrow: 1 }}>
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(data.impact_score || 0, 100)}
+                      sx={{
+                        height: 10,
+                        borderRadius: 5,
+                        backgroundColor: 'rgba(255,255,255,0.2)',
+                        '& .MuiLinearProgress-bar': {
+                          backgroundColor: 'white',
+                        },
+                        mb: 1,
+                      }}
+                    />
+                    <Typography variant="body1">
+                      {overallRating}
                     </Typography>
                   </Box>
-                </CardContent>
-              </Card>
-            </Grid>
+                </Box>
+                <Divider sx={{ backgroundColor: 'rgba(255,255,255,0.2)', my: 2 }} />
+                <Typography variant="body2">
+                  This score represents the developer's overall impact based on contributions, 
+                  collaboration, consistency, and project influence.
+                </Typography>
+              </CardContent>
+            </Card>
             
             {/* Top Languages */}
             {topLanguages && topLanguages.length > 0 && (
-              <Grid item xs={12}>
-                <Card sx={{ borderRadius: 3 }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="h6" fontWeight="bold" gutterBottom>
-                      Top Languages
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {topLanguages.map((lang, index) => (
-                        <Chip
-                          key={index}
-                          label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
-                          size="small"
-                          sx={{
-                            bgcolor: `${theme.palette.primary.main}15`,
-                            color: theme.palette.primary.main,
-                            my: 0.5
-                          }}
-                        />
-                      ))}
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
+              <Card sx={{ 
+                borderRadius: 3,
+                flexGrow: 1
+              }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Typography variant="h6" fontWeight="bold" gutterBottom>
+                    Top Languages
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {topLanguages.map((lang, index) => (
+                      <Chip
+                        key={index}
+                        label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
+                        size="small"
+                        sx={{
+                          bgcolor: `${theme.palette.primary.main}15`,
+                          color: theme.palette.primary.main,
+                          my: 0.5
+                        }}
+                      />
+                    ))}
+                  </Box>
+                </CardContent>
+              </Card>
             )}
-          </Grid>
+          </Box>
         </Grid>
 
         {/* Right Column - Developer Summary */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ height: '100%', borderRadius: 3 }}>
-            <CardContent sx={{ p: 3 }}>
+          <Card sx={{ 
+            height: '100%', 
+            borderRadius: 3,
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <CardContent sx={{ 
+              p: 3, 
+              display: 'flex', 
+              flexDirection: 'column',
+              height: '100%'
+            }}>
               <Typography variant="h6" fontWeight="bold" gutterBottom>
                 Developer Summary
               </Typography>
@@ -535,44 +539,55 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                 {summary}
               </Typography>
               
-              <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                Strengths
-              </Typography>
-              <Box sx={{ mb: 2 }}>
-                {strengths.map((strength, index) => (
-                  <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        bgcolor: 'success.main',
-                        mr: 1.5,
-                      }}
-                    />
-                    <Typography variant="body2">{strength}</Typography>
+              <Box sx={{ 
+                flexGrow: 1, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                justifyContent: 'space-between'
+              }}>
+                <Box>
+                  <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                    Strengths
+                  </Typography>
+                  <Box sx={{ mb: 2 }}>
+                    {strengths.map((strength, index) => (
+                      <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            bgcolor: 'success.main',
+                            mr: 1.5,
+                          }}
+                        />
+                        <Typography variant="body2">{strength}</Typography>
+                      </Box>
+                    ))}
                   </Box>
-                ))}
-              </Box>
-              
-              <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                Considerations
-              </Typography>
-              <Box>
-                {considerations.map((consideration, index) => (
-                  <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        bgcolor: 'warning.main',
-                        mr: 1.5,
-                      }}
-                    />
-                    <Typography variant="body2">{consideration}</Typography>
+                </Box>
+                
+                <Box>
+                  <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                    Considerations
+                  </Typography>
+                  <Box>
+                    {considerations.map((consideration, index) => (
+                      <Box key={index} sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            bgcolor: 'warning.main',
+                            mr: 1.5,
+                          }}
+                        />
+                        <Typography variant="body2">{consideration}</Typography>
+                      </Box>
+                    ))}
                   </Box>
-                ))}
+                </Box>
               </Box>
             </CardContent>
           </Card>
