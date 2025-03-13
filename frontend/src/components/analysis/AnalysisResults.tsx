@@ -102,7 +102,9 @@ const emptyContributions: Contributions = {
   consistency: 0,
   reviews: 0,
   issues: 0,
-  repos_impact: 0
+  repos_impact: 0,
+  top_languages: [],
+  top_repositories: []
 };
 
 // Helper function to generate a summary of the developer's profile
@@ -203,26 +205,41 @@ const formatDate = (dateString: string | undefined): string => {
 };
 
 // Helper function to map repository data from backend format to our component format
-const mapRepositories = (metrics: any): Repository[] => {
-  if (!metrics || !metrics.repositories || !Array.isArray(metrics.repositories)) {
+const mapRepositories = (repoData: any[]): Repository[] => {
+  if (!repoData || !Array.isArray(repoData) || repoData.length === 0) {
+    console.log("No repositories data found");
     return [];
   }
   
-  return metrics.repositories.map((repo: any) => ({
-    name: repo.name || 'Unknown Repository',
-    url: `https://github.com/${repo.name}` || '#',
-    stars: repo.stars || 0,
-    forks: repo.forks || 0,
-    num_contributors: repo.collaborators || 0,
-    commit_frequency: repo.primary_language || 'N/A', // Using this field for language now
-    last_updated: 'N/A', // Not available in the API response
-    num_commits: repo.contribution_ratio ? (repo.contribution_ratio * 100).toFixed(1) + '%' : '0%', // Using this for contribution ratio
-    impact_score: repo.repo_impact || 0
-  }));
+  return repoData.map((repo: any) => {
+    console.log("Processing repository:", repo);
+    
+    // Determine the URL to use
+    let repoUrl = '#';
+    if (repo.homepageUrl) {
+      repoUrl = repo.homepageUrl;
+    } else if (repo.name) {
+      repoUrl = `https://github.com/${repo.name}`;
+    }
+    
+    return {
+      name: repo.name || 'Unknown Repository',
+      url: repoUrl,
+      stars: repo.stars || 0,
+      forks: repo.forks || 0,
+      num_contributors: repo.collaborators || 0,
+      primary_language: repo.primary_language || 'N/A',
+      commit_frequency: repo.commit_frequency || 'N/A',
+      last_updated: repo.last_commit_date ? formatDate(repo.last_commit_date) : 'N/A',
+      num_commits: repo.contribution_ratio ? (repo.contribution_ratio * 100).toFixed(1) + '%' : '0%',
+      impact_score: repo.repo_impact || 0
+    };
+  });
 };
 
 const AnalysisResults: React.FC<Props> = ({ data }) => {
   const theme = useTheme();
+  console.log("Full analysis data:", JSON.stringify(data, null, 2));
 
   // Ensure we have valid data
   if (!data || !data.analysis) {
@@ -237,15 +254,76 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
 
   // Extract contribution data from the correct location in the response
   const contributions = data.analysis.contributions || emptyContributions;
+  console.log("Contributions data:", JSON.stringify(contributions, null, 2));
+  
   const pulls = contributions.pulls;
   const issues = contributions.issues;
   const reviews = contributions.reviews;
   const commits = contributions.commits;
   const consistency = contributions.consistency;
   const repos_impact = contributions.repos_impact;
+  
+  // Handle different formats of top languages data
+  let topLanguages: Array<{ language: string; percentage: number }> = [];
+  
+  if (contributions.top_languages && Array.isArray(contributions.top_languages)) {
+    console.log("Found top_languages in contributions:", contributions.top_languages);
+    
+    // Map the languages to a consistent format
+    topLanguages = contributions.top_languages.map((lang: any) => {
+      // Check if the language data is in the expected format
+      if (typeof lang === 'object' && lang !== null) {
+        // Use name as the primary field, fallback to language if name is not available
+        const languageName = lang.name || lang.language || 'Unknown';
+        const percentage = typeof lang.percentage === 'number' ? lang.percentage : 
+                           typeof lang.percent === 'number' ? lang.percent : 0;
+        
+        return {
+          language: languageName,
+          percentage: percentage
+        };
+      }
+      // Default case for any other format
+      return { language: 'Unknown', percentage: 0 };
+    });
+  } else {
+    // Try to find languages data in other locations
+    try {
+      // Safely access potential language data using optional chaining
+      const metricsData = data.analysis.metrics as Record<string, any>;
+      const languagesData = metricsData?.languages;
+      
+      if (languagesData && Array.isArray(languagesData)) {
+        console.log("Found languages in metrics:", languagesData);
+        topLanguages = languagesData.map((lang: any) => ({
+          language: lang.language || lang.name || 'Unknown',
+          percentage: lang.percentage || lang.percent || 0
+        }));
+      }
+    } catch (error) {
+      console.error("Error processing languages data:", error);
+    }
+  }
+  
+  console.log("Processed top languages:", topLanguages);
 
-  // Map repositories from the metrics data
-  const repositories = mapRepositories(data.analysis.metrics);
+  // Map repositories from the contributions data
+  let repositories: Repository[] = [];
+  
+  if (contributions.top_repositories && Array.isArray(contributions.top_repositories)) {
+    console.log("Using top_repositories from contributions:", contributions.top_repositories);
+    repositories = mapRepositories(contributions.top_repositories);
+  } else if (data.analysis.metrics && data.analysis.metrics.repositories) {
+    // Fallback to metrics.repositories if available
+    console.log("Falling back to metrics.repositories");
+    repositories = mapRepositories(data.analysis.metrics.repositories);
+  } else if (data.analysis.repos && Array.isArray(data.analysis.repos)) {
+    // Try to use repos directly if other sources are not available
+    console.log("Using repos directly from analysis:", data.analysis.repos);
+    repositories = data.analysis.repos;
+  }
+  
+  console.log("Final mapped repositories:", repositories);
 
   // Generate summary and insights
   const summary = generateSummary(data);
@@ -312,7 +390,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
               color: 'white',
             }}>
               <Avatar 
-                src={data.analysis.avatar_url}
+                src={data.analysis.avatarUrl}
                 sx={{ 
                   width: 80, 
                   height: 80, 
@@ -322,7 +400,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                   border: `2px solid ${theme.palette.primary.light}`,
                 }}
               >
-                {!data.analysis.avatar_url && <Person sx={{ fontSize: 40 }} />}
+                {!(data.analysis.avatarUrl) && <Person sx={{ fontSize: 40 }} />}
               </Avatar>
               <Box>
                 {data.analysis.name && (
@@ -389,7 +467,6 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                   collaboration, consistency, and project influence.
                 </Typography>
               </Box>
-              <Code sx={{ position: 'absolute', right: 20, bottom: 20, fontSize: 100, opacity: 0.1 }} />
             </CardContent>
           </Card>
         </Grid>
@@ -398,14 +475,34 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%', borderRadius: 3 }}>
             <CardContent sx={{ p: 3 }}>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" fontWeight="bold" gutterBottom>
                 Developer Summary
               </Typography>
               <Typography variant="body1" paragraph>
                 {summary}
               </Typography>
               
-              <Divider sx={{ my: 2 }} />
+              {topLanguages && topLanguages.length > 0 && (
+                <>
+                  <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+                    Top Languages
+                  </Typography>
+                  <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {topLanguages.map((lang, index) => (
+                      <Chip
+                        key={index}
+                        label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
+                        size="small"
+                        sx={{
+                          bgcolor: `${theme.palette.primary.main}15`,
+                          color: theme.palette.primary.main,
+                        }}
+                      />
+                    ))}
+                  </Box>
+                  <Divider sx={{ my: 2 }} />
+                </>
+              )}
               
               <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
                 Strengths
@@ -516,14 +613,14 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
         </Grid>
 
         {/* Repositories */}
-        {repositories.length > 0 && (
+        {repositories && repositories.length > 0 ? (
           <Grid item xs={12}>
             <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
               Top Repository Contributions
             </Typography>
             <Grid container spacing={3}>
               {repositories
-                .sort((a, b) => b.impact_score - a.impact_score)
+                .sort((a, b) => (b.impact_score || 0) - (a.impact_score || 0))
                 .slice(0, 4)
                 .map((repo, index) => (
                   <Grid item xs={12} md={6} key={index}>
@@ -541,7 +638,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                             </Link>
                           </Typography>
                           <Chip 
-                            label={`Impact: ${repo.impact_score.toFixed(2)}`}
+                            label={`Impact: ${(repo.impact_score || 0).toFixed(2)}`}
                             color="primary"
                             size="small"
                           />
@@ -585,7 +682,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                               <Commit sx={{ color: 'success.main', mb: 1 }} />
                               <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.num_commits}
+                                {repo.num_commits || '0%'}
                               </Typography>
                               <Typography variant="body2" color="textSecondary">
                                 Contributions
@@ -596,10 +693,9 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                         
                         <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Chip
-                            label={`Language: ${repo.commit_frequency}`}
+                            label={`Language: ${repo.primary_language || 'N/A'}`}
                             color="secondary"
                             size="small"
-                            icon={<CodeIcon fontSize="small" />}
                             sx={{ mr: 1 }}
                           />
                           <Typography variant="body2" color="textSecondary">
@@ -611,6 +707,20 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                   </Grid>
                 ))}
             </Grid>
+          </Grid>
+        ) : (
+          <Grid item xs={12}>
+            <Card sx={{ borderRadius: 3, p: 3, mt: 4 }}>
+              <Box sx={{ textAlign: 'center', py: 3 }}>
+                <GitHub sx={{ fontSize: 60, color: 'text.secondary', opacity: 0.5, mb: 2 }} />
+                <Typography variant="h6" color="textSecondary">
+                  No repository contributions data available
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                  This developer hasn't made contributions to any repositories that we could analyze.
+                </Typography>
+              </Box>
+            </Card>
           </Grid>
         )}
         

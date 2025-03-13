@@ -6,9 +6,10 @@ export interface Repository {
   stars: number;
   forks: number;
   num_contributors: number;
+  primary_language: string;
   commit_frequency: string;
   last_updated: string;
-  num_commits: number;
+  num_commits: string;
   impact_score: number;
 }
 
@@ -19,6 +20,8 @@ export interface Contributions {
   pulls: number;
   repos_impact: number;
   reviews: number;
+  top_languages?: Array<{ language: string; percentage: number }>;
+  top_repositories?: Repository[];
 }
 
 export interface Metrics {
@@ -66,7 +69,7 @@ export interface Analysis {
   location?: string;
   name?: string;
   url?: string | null;
-  avatar_url?: string;
+  avatarUrl?: string;
 }
 
 export interface AnalysisResponse {
