@@ -380,22 +380,24 @@ def aggregate_user_data(username, github_data):
         # Initialize results dictionary
         result = {
             'username': username,
-            'raw_data': github_data,
             'contributions': {
                 'pulls': 0,
                 'commits': 0,
                 'issues': 0,
                 'reviews': 0,
                 'repos_impact': 0,
-                'consistency': 0
-            },
-            'metrics': {  # New metrics dictionary to store all sub-metrics
-                'repositories': [],
-                'repos_impact': {},
-                'consistency': {}
+                'consistency': 0,
+                'top_repositories': []
             }
         }
         
+        # Create temporary storage for detailed metrics (not returned to frontend)
+        temp_metrics = {
+            'repositories': [],  # Detailed repository metrics
+            'repos_impact': {},  # Repository impact calculations
+            'consistency': {}    # Consistency metrics
+        }
+
         # Extract user information
         user_data = github_data.get('user', {})
         
@@ -417,11 +419,14 @@ def aggregate_user_data(username, github_data):
         # Get weighted repository metrics
         repos = user_data.get('repositories', {}).get('nodes', [])
         repo_impacts = []
+        logger.info(f"Prashob:1")
+        # Calculate top languages used by the developer using actual language statistics
+        language_usage = {}
         
         for repo in repos:
             if repo.get('isPrivate', False):
                 continue
-                
+            logger.info(f"Prashob:1.1")   
             # Get repository metrics
             stars = repo.get('stargazerCount', 0)
             forks = repo.get('forkCount', 0)
@@ -441,7 +446,27 @@ def aggregate_user_data(username, github_data):
             total_commits = repo.get('defaultBranchRef', {}).get('target', {}).get('history', {}).get('totalCount', 0) if repo.get('defaultBranchRef', {}) is not None else 0
             
             contribution_ratio = developer_commits / total_commits if total_commits > 0 else 0
+            logger.info(f"Prashob:1.2")
+            # Get language statistics for this repository
+            languages_data = repo.get('languages', {})
+            language_edges = languages_data.get('edges', [])
             
+            for edge in language_edges:
+                language_name = edge.get('node', {}).get('name')
+                language_size = edge.get('size', 0)
+                
+                if not language_name or language_size <= 0:
+                    continue
+                
+                # Weight language usage by code size and contribution ratio
+                weighted_size = language_size * contribution_ratio
+                
+                # Accumulate language usage
+                if language_name in language_usage:
+                    language_usage[language_name] += weighted_size
+                else:
+                    language_usage[language_name] = weighted_size
+            logger.info(f"Prashob:1.3")        
             # Pull Request stats
             merged_pull_requests = repo.get('mergedPullRequests', {}).get('totalCount', 0)
             closed_pull_requests = repo.get('closedPullRequests', {}).get('totalCount', 0)
@@ -454,7 +479,7 @@ def aggregate_user_data(username, github_data):
                 pr.get('reviews', {}).get('totalCount', 0) + pr.get('comments', {}).get('totalCount', 0)
                 for pr in pull_request_nodes
             )
-            
+            logger.info(f"Prashob:1.4")
             # Calculate technical impact
             code_quality = (
                 TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'] * pr_acceptance +
@@ -472,7 +497,7 @@ def aggregate_user_data(username, github_data):
             )
 
             repo_impacts.append(repo_impact)
-            
+            logger.info(f"Prashob:1.5")
             # Store repository sub-metrics - now including all technical and ecosystem impact metrics
             repo_metrics = {
                 'name': repo.get('name'),
@@ -511,16 +536,18 @@ def aggregate_user_data(username, github_data):
                     'contribution_ratio': contribution_ratio
                 }
             }
-            
-            result['metrics']['repositories'].append(repo_metrics)
-            
+            logger.info(f"Prashob:1.6")
+            temp_metrics['repositories'].append(repo_metrics)
+            logger.info(f"Prashob:1.7")
+        logger.info(f"Prashob:2")
+
         # Calculate repos_impact even if repo_impacts is empty (will be 0)
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
         
         # Add top 4 repositories with highest repo_impact
-        if result['metrics']['repositories']:
+        if temp_metrics['repositories']:
             # Sort repositories by repo_impact in descending order
-            sorted_repos = sorted(result['metrics']['repositories'], key=lambda x: x['repo_impact'], reverse=True)
+            sorted_repos = sorted(temp_metrics['repositories'], key=lambda x: x['repo_impact'], reverse=True)
             # Take top 4 (or fewer if less than 4 exist)
             top_repos = sorted_repos[:4]
             
@@ -558,19 +585,24 @@ def aggregate_user_data(username, github_data):
         else:
             result['contributions']['top_repositories'] = []
         
-        # Store repos_impact sub-metrics
-        result['metrics']['repos_impact'] = {
-            'repo_count': len(result['metrics']['repositories']),
-            'average_impact': result['contributions']['repos_impact'],
-            'max_impact': max(repo_impacts) if repo_impacts else 0,
-            'min_impact': min(repo_impacts) if repo_impacts else 0,
-            'median_impact': np.median(repo_impacts) if repo_impacts else 0,
-            'impact_weights': {
-                'technical': REPO_IMPACT_WEIGHTS['technical'],
-                'ecosystem': REPO_IMPACT_WEIGHTS['ecosystem']
-            }
-        }
-
+        logger.info(f"Prashob:3")
+        # Sort languages by usage and take top 5
+        top_languages = sorted(
+            [{'name': lang, 'usage': size} for lang, size in language_usage.items()],
+            key=lambda x: x['usage'],
+            reverse=True
+        )[:5]
+        
+        # Calculate percentages for visualization
+        total_usage = sum(lang['usage'] for lang in top_languages) if top_languages else 1
+        for lang in top_languages:
+            lang['percentage'] = round((lang['usage'] / total_usage) * 100, 1)
+            # Remove the raw usage value as it's not meaningful to display
+            del lang['usage']
+            
+        result['contributions']['top_languages'] = top_languages
+        
+        logger.info(f"Prashob:4")
         # Consistency calculation
         weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
         active_weeks = sum(1 for week in weeks if any(
@@ -587,16 +619,7 @@ def aggregate_user_data(username, github_data):
                                  for week in weeks 
                                  for day in week.get('contributionDays', []))
         
-        result['metrics']['consistency'] = {
-            'total_weeks': len(weeks),
-            'active_weeks': active_weeks,
-            'total_days': total_days,
-            'active_days': active_days,
-            'active_days_ratio': active_days / total_days if total_days else 0,
-            'total_contributions': total_contributions,
-            'avg_contributions_per_active_day': total_contributions / active_days if active_days else 0
-        }
-        
+        logger.info(f"Prashob:5")
         # Add a flag to indicate if this is a user with zero activity
         result['has_activity'] = (
             result['contributions']['pulls'] > 0 or
@@ -697,6 +720,15 @@ def fetch_all_data(username):
                 }
                 primaryLanguage {
                   name
+                }
+                languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
+                    totalCount
+                    edges {
+                        size
+                        node {
+                            name
+                        }
+                    }
                 }
                 defaultBranchRef {
                     target {
