@@ -380,6 +380,7 @@ def aggregate_user_data(username, github_data):
         # Initialize results dictionary
         result = {
             'username': username,
+            'raw_data': github_data,
             'contributions': {
                 'pulls': 0,
                 'commits': 0,
@@ -388,7 +389,11 @@ def aggregate_user_data(username, github_data):
                 'repos_impact': 0,
                 'consistency': 0
             },
-            'raw_data': github_data
+            'metrics': {  # New metrics dictionary to store all sub-metrics
+                'repositories': [],
+                'repos_impact': {},
+                'consistency': {}
+            }
         }
         
         # Extract user information
@@ -398,8 +403,8 @@ def aggregate_user_data(username, github_data):
             logger.error(f"User data not found in GraphQL response for {username}")
             return {'error': f'User not found'}
         
-        # Basic user info
-        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio']})
+        # Basic user info - always store this even if user has zero activity
+        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio', 'avatarUrl']})
         result['followers'] = user_data.get('followers', {}).get('totalCount', 0) if user_data.get('followers') is not None else 0
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
         
@@ -468,7 +473,61 @@ def aggregate_user_data(username, github_data):
 
             repo_impacts.append(repo_impact)
             
+            # Store repository sub-metrics - now including all technical and ecosystem impact metrics
+            repo_metrics = {
+                'name': repo.get('name'),
+                'stars': stars,
+                'forks': forks,
+                'collaborators': collaborators,
+                'collab_factor': collab_factor,
+                'developer_commits': developer_commits,
+                'total_commits': total_commits,
+                'contribution_ratio': contribution_ratio,
+                'merged_pull_requests': merged_pull_requests,
+                'closed_pull_requests': closed_pull_requests,
+                'total_pull_requests': total_pull_requests,
+                'pr_acceptance': pr_acceptance,
+                'review_comments': review_comments,
+                'code_quality': code_quality,
+                'repo_tech_impact': repo_tech_impact,
+                'popularity': popularity,
+                'repo_eco_impact': repo_eco_impact,
+                'repo_impact': repo_impact,
+                # Store the component metrics used in calculations
+                'technical_impact_components': {
+                    'contribution_ratio': contribution_ratio,
+                    'contribution_ratio_exponent': CONTRIBUTION_RATIO_EXPONENT,
+                    'collab_factor': collab_factor,
+                    'code_quality': code_quality,
+                    'pr_acceptance_weight': TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'],
+                    'review_activity_weight': TECHNICAL_IMPACT_WEIGHTS['review_activity'],
+                    'review_activity_normalization': REVIEW_ACTIVITY['normalization_factor']
+                },
+                'ecosystem_impact_components': {
+                    'stars': stars,
+                    'forks': forks,
+                    'popularity_formula': f"({stars} + 0.1 * {forks})^0.5 = {popularity}",
+                    'contribution_ratio': contribution_ratio
+                }
+            }
+            
+            result['metrics']['repositories'].append(repo_metrics)
+            
+        # Calculate repos_impact even if repo_impacts is empty (will be 0)
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
+        
+        # Store repos_impact sub-metrics
+        result['metrics']['repos_impact'] = {
+            'repo_count': len(result['metrics']['repositories']),
+            'average_impact': result['contributions']['repos_impact'],
+            'max_impact': max(repo_impacts) if repo_impacts else 0,
+            'min_impact': min(repo_impacts) if repo_impacts else 0,
+            'median_impact': np.median(repo_impacts) if repo_impacts else 0,
+            'impact_weights': {
+                'technical': REPO_IMPACT_WEIGHTS['technical'],
+                'ecosystem': REPO_IMPACT_WEIGHTS['ecosystem']
+            }
+        }
 
         # Consistency calculation
         weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
@@ -477,6 +536,32 @@ def aggregate_user_data(username, github_data):
             for day in week.get('contributionDays', [])
         ))
         result['contributions']['consistency'] = active_weeks / len(weeks) if weeks else 0    
+        
+        # Store consistency sub-metrics
+        total_days = sum(len(week.get('contributionDays', [])) for week in weeks)
+        active_days = sum(1 for week in weeks for day in week.get('contributionDays', []) 
+                         if day.get('contributionCount', 0) > 0)
+        total_contributions = sum(day.get('contributionCount', 0) 
+                                 for week in weeks 
+                                 for day in week.get('contributionDays', []))
+        
+        result['metrics']['consistency'] = {
+            'total_weeks': len(weeks),
+            'active_weeks': active_weeks,
+            'total_days': total_days,
+            'active_days': active_days,
+            'active_days_ratio': active_days / total_days if total_days else 0,
+            'total_contributions': total_contributions,
+            'avg_contributions_per_active_day': total_contributions / active_days if active_days else 0
+        }
+        
+        # Add a flag to indicate if this is a user with zero activity
+        result['has_activity'] = (
+            result['contributions']['pulls'] > 0 or
+            result['contributions']['commits'] > 0 or
+            result['contributions']['reviews'] > 0 or
+            result['contributions']['issues'] > 0
+        )
         
         return result
     except Exception as e:
@@ -512,6 +597,7 @@ def fetch_all_data(username):
             location
             company
             bio
+            avatarUrl
             followers {
               totalCount
             }
@@ -530,7 +616,7 @@ def fetch_all_data(username):
                   }
                 }
               }
-              commitContributionsByRepository(maxRepositories: 50) {
+              commitContributionsByRepository(maxRepositories: 20) {
                 repository {
                   name
                 }
@@ -539,7 +625,7 @@ def fetch_all_data(username):
                 }
               }
             }
-            repositories(first: 50, orderBy: {field: STARGAZERS, direction: DESC}) {
+            repositories(first: 20, orderBy: {field: STARGAZERS, direction: DESC}) {
               totalCount
               nodes {
                 name

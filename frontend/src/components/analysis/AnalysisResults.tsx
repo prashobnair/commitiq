@@ -588,7 +588,7 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
                                 {repo.num_commits}
                               </Typography>
                               <Typography variant="body2" color="textSecondary">
-                                Contribution
+                                Contributions
                               </Typography>
                             </Box>
                           </Grid>
