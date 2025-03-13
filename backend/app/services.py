@@ -380,6 +380,7 @@ def aggregate_user_data(username, github_data):
         # Initialize results dictionary
         result = {
             'username': username,
+            'raw_data': github_data,
             'contributions': {
                 'pulls': 0,
                 'commits': 0,
@@ -403,7 +404,7 @@ def aggregate_user_data(username, github_data):
             return {'error': f'User not found'}
         
         # Basic user info - always store this even if user has zero activity
-        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio']})
+        result.update({k: user_data.get(k) for k in ['name', 'email', 'url', 'company', 'location', 'bio', 'avatarUrl']})
         result['followers'] = user_data.get('followers', {}).get('totalCount', 0) if user_data.get('followers') is not None else 0
         result['following'] = user_data.get('following', {}).get('totalCount', 0) if user_data.get('following') is not None else 0
         
@@ -477,6 +478,7 @@ def aggregate_user_data(username, github_data):
                 'name': repo.get('name'),
                 'stars': stars,
                 'forks': forks,
+                'homepageUrl': repo.get('homepageUrl'),
                 'collaborators': collaborators,
                 'collab_factor': collab_factor,
                 'developer_commits': developer_commits,
@@ -514,6 +516,47 @@ def aggregate_user_data(username, github_data):
             
         # Calculate repos_impact even if repo_impacts is empty (will be 0)
         result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
+        
+        # Add top 4 repositories with highest repo_impact
+        if result['metrics']['repositories']:
+            # Sort repositories by repo_impact in descending order
+            sorted_repos = sorted(result['metrics']['repositories'], key=lambda x: x['repo_impact'], reverse=True)
+            # Take top 4 (or fewer if less than 4 exist)
+            top_repos = sorted_repos[:4]
+            
+            # Extract required information for each top repository
+            result['contributions']['top_repositories'] = []
+            for repo in top_repos:
+                # Find the original repository data to get primary language and last commit date
+                original_repo = next((r for r in repos if r.get('name') == repo['name']), {})
+                
+                # Get primary language
+                primary_language = original_repo.get('primaryLanguage', {})
+                language_name = primary_language.get('name') if primary_language else None
+                
+                # Get last commit date
+                last_commit_date = None
+                if original_repo.get('defaultBranchRef'):
+                    last_commit = original_repo.get('defaultBranchRef', {}).get('target', {}).get('lastCommit', {}).get('nodes', [])
+                    if last_commit and len(last_commit) > 0:
+                        last_commit_date = last_commit[0].get('committedDate')
+                
+                # Create repository summary with required fields
+                repo_summary = {
+                    'name': repo['name'],
+                    'stars': repo['stars'],
+                    'forks': repo['forks'],
+                    'homepageUrl': repo['homepageUrl'],
+                    'collaborators': repo['collaborators'],
+                    'contribution_ratio': repo['contribution_ratio'],
+                    'primary_language': language_name,
+                    'last_commit_date': last_commit_date,
+                    'repo_impact': repo['repo_impact']
+                }
+                
+                result['contributions']['top_repositories'].append(repo_summary)
+        else:
+            result['contributions']['top_repositories'] = []
         
         # Store repos_impact sub-metrics
         result['metrics']['repos_impact'] = {
@@ -596,6 +639,7 @@ def fetch_all_data(username):
             location
             company
             bio
+            avatarUrl
             followers {
               totalCount
             }
@@ -630,6 +674,7 @@ def fetch_all_data(username):
                 stargazerCount
                 forkCount
                 isPrivate
+                homepageUrl
                 collaborators(first: 1) {
                   totalCount
                 }
@@ -653,16 +698,16 @@ def fetch_all_data(username):
                 primaryLanguage {
                   name
                 }
-                languages(first: 10) {
-                  nodes {
-                    name
-                  }
-                }
                 defaultBranchRef {
                     target {
                         ... on Commit {
                             history(first: 0) {
                                 totalCount
+                            }
+                            lastCommit: history(first: 1) {
+                                nodes {
+                                    committedDate
+                                }
                             }
                         }
                     }
