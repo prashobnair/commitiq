@@ -43,17 +43,17 @@ const LandingPage: React.FC = () => {
     {
       icon: <TrendingUp />,
       title: 'Impact Score',
-      description: 'Comprehensive evaluation of developer contributions and influence',
+      description: 'Measure a developer’s true contributions and influence beyond commit counts',
     },
     {
       icon: <Psychology />,
       title: 'Deep Insights',
-      description: 'Advanced metrics beyond commit counts and green squares',
+      description: 'Understand technical expertise, collaboration habits, and consistency with advanced metrics',
     },
     {
       icon: <Timeline />,
       title: 'Growth Tracking',
-      description: 'Track developer progress and evolution over time',
+      description: 'Track a developer\'s progress over time and identify those with a strong track record of improvement and learning',
     },
   ];
 
@@ -61,17 +61,17 @@ const LandingPage: React.FC = () => {
     {
       icon: <Speed />,
       title: 'Faster Hiring',
-      description: 'Quickly identify top talent based on real contributions',
+      description: 'Quickly filter out top candidates from hundreds of profiles based on actual contributions',
     },
     {
       icon: <CompareArrows />,
       title: 'Objective Comparison',
-      description: 'Compare candidates using standardized metrics',
+      description: 'Use standardized metrics to compare developers fairly and efficiently',
     },
     {
       icon: <People />,
       title: 'Team Fit',
-      description: 'Assess collaboration style and team compatibility',
+      description: 'Evaluate collaboration style and engagement to ensure cultural and workflow compatibility',
     },
   ];
 
@@ -156,7 +156,7 @@ const LandingPage: React.FC = () => {
                     textShadow: '0 2px 10px rgba(0,0,0,0.1)',
                   }}
                 >
-                  Discover True Developer Impact
+                  Identify Top Engineering Talent Instantly
                 </Typography>
                 <Typography
                   variant="h5"
@@ -167,8 +167,7 @@ const LandingPage: React.FC = () => {
                     maxWidth: '600px',
                   }}
                 >
-                  Beyond the green squares - Get deep insights into developer contributions
-                  and impact through advanced GitHub analytics
+                  Go beyond green squares—leverage advanced GitHub analytics to pinpoint the most impactful developers in your candidate pool
                 </Typography>
 
                 <Paper
@@ -309,7 +308,7 @@ const LandingPage: React.FC = () => {
               color="textSecondary"
               sx={{ mb: 6, maxWidth: '700px', mx: 'auto' }}
             >
-              Our platform provides recruiters with deep insights into developer skills and impact
+              Our platform helps recruiters quickly identify and prioritize high-potential candidates based on real-world contributions, collaboration, and technical influence
             </Typography>
 
             <Grid container spacing={4}>
@@ -441,14 +440,14 @@ const LandingPage: React.FC = () => {
               }}
             >
               <Typography variant="h3" component="h3" sx={{ mb: 2, fontWeight: 700 }}>
-                Ready to transform your technical recruiting?
+               Supercharge Your Tech Hiring Process
               </Typography>
               <Typography
                 variant="h6"
                 color="textSecondary"
                 sx={{ mb: 4, maxWidth: '700px', mx: 'auto' }}
               >
-                Start analyzing GitHub profiles today and discover the true impact of your candidates
+                Start analyzing GitHub profiles today and uncover the developers who will make the biggest impact on your team
               </Typography>
               <Button
                 variant="contained"
