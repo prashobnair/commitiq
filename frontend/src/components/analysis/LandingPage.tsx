@@ -14,6 +14,8 @@ import {
   Divider,
   Stack,
   Avatar,
+  LinearProgress,
+  Chip,
 } from '@mui/material';
 import {
   TrendingUp,
@@ -43,7 +45,7 @@ const LandingPage: React.FC = () => {
     {
       icon: <TrendingUp />,
       title: 'Impact Score',
-      description: 'Measure a developer’s true contributions and influence beyond commit counts',
+      description: 'Measure a developer\'s true contributions and influence beyond commit counts',
     },
     {
       icon: <Psychology />,
@@ -221,69 +223,177 @@ const LandingPage: React.FC = () => {
                 <Box
                   sx={{
                     position: 'relative',
-                    height: '400px',
+                    height: '420px',
                     width: '100%',
                   }}
                 >
                   <Box
                     sx={{
                       position: 'absolute',
-                      top: '10%',
-                      left: '5%',
-                      width: '90%',
-                      height: '80%',
+                      top: '5%',
+                      left: '-10%',
+                      width: '120%',
+                      height: '90%',
                       borderRadius: 4,
-                      background: alpha(theme.palette.background.paper, 0.9),
+                      background: alpha(theme.palette.background.paper, 0.95),
                       boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
-                      p: 3,
+                      p: 2.5,
                       display: 'flex',
                       flexDirection: 'column',
+                      overflow: 'hidden',
                     }}
                   >
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Avatar sx={{ bgcolor: theme.palette.primary.main, mr: 2 }}>JD</Avatar>
+                    {/* Developer Profile Header */}
+                    <Box sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      mb: 1.5,
+                      p: 1.5,
+                      borderRadius: 2,
+                      background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.8)} 0%, ${alpha(theme.palette.secondary.main, 0.8)} 100%)`,
+                      color: 'white',
+                    }}>
+                      <Avatar sx={{ bgcolor: 'white', color: theme.palette.primary.main, mr: 2, width: 40, height: 40 }}>JD</Avatar>
                       <Box>
-                        <Typography variant="h6" sx={{ color: theme.palette.text.primary }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
                           John Doe
                         </Typography>
-                        <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                          Senior Developer
+                        <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                          Strong Contributor
                         </Typography>
                       </Box>
                     </Box>
-                    <Box
-                      sx={{
-                        height: 10,
-                        borderRadius: 5,
-                        background: `linear-gradient(90deg, ${theme.palette.success.main} 0%, ${theme.palette.warning.main} 50%, ${theme.palette.error.main} 100%)`,
-                        mb: 3,
-                      }}
-                    />
-                    <Grid container spacing={2}>
-                      {[
-                        { label: 'Impact Score', value: '87.5' },
-                        { label: 'Code Quality', value: '92.3' },
-                        { label: 'Collaboration', value: '78.9' },
-                        { label: 'Consistency', value: '85.2' },
-                      ].map((metric, index) => (
-                        <Grid item xs={6} key={index}>
-                          <Paper
-                            sx={{
-                              p: 2,
-                              textAlign: 'center',
-                              background: alpha(theme.palette.background.default, 0.7),
-                            }}
-                          >
-                            <Typography variant="body2" color="textSecondary">
-                              {metric.label}
+
+                    {/* Main Content */}
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'row',
+                      gap: 2.5,
+                      flex: 1,
+                      overflow: 'hidden'
+                    }}>
+                      {/* Left Column - Impact Score and Top Languages */}
+                      <Box sx={{ 
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        width: '50%'
+                      }}>
+                        {/* Impact Score */}
+                        <Card sx={{ 
+                          borderRadius: 2,
+                          background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
+                          color: 'white',
+                          flex: 6,
+                          p: 1.5
+                        }}>
+                          <Typography variant="subtitle2" fontWeight="bold">
+                            Overall Impact Score
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', my: 1 }}>
+                            <Typography variant="h4" component="div" sx={{ fontWeight: 'bold', mr: 1.5 }}>
+                              78.5
                             </Typography>
-                            <Typography variant="h5" color="primary" sx={{ fontWeight: 'bold' }}>
-                              {metric.value}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      ))}
-                    </Grid>
+                            <Box sx={{ flexGrow: 1 }}>
+                              <LinearProgress
+                                variant="determinate"
+                                value={78.5}
+                                sx={{
+                                  height: 8,
+                                  borderRadius: 3,
+                                  backgroundColor: 'rgba(255,255,255,0.2)',
+                                  '& .MuiLinearProgress-bar': {
+                                    backgroundColor: 'white',
+                                  },
+                                }}
+                              />
+                              <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 'medium', fontSize: '0.75rem' }}>
+                                Strong Contributor
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Card>
+                        
+                        {/* Top Languages */}
+                        <Card sx={{ 
+                          borderRadius: 2,
+                          flex: 4,
+                          p: 1.5
+                        }}>
+                          <Typography variant="subtitle2" fontWeight="bold">
+                            Top Languages
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.8, mt: 1 }}>
+                            {[
+                              { language: 'TypeScript', percentage: 0.45 },
+                              { language: 'JavaScript', percentage: 0.30 },
+                              { language: 'Vue', percentage: 0.15 },
+                              { language: 'Go', percentage: 0.10 }
+                            ].map((lang, index) => (
+                              <Chip
+                                key={index}
+                                label={`${lang.language}: ${(lang.percentage * 100).toFixed(0)}%`}
+                                size="small"
+                                sx={{
+                                  bgcolor: `${theme.palette.primary.main}15`,
+                                  color: theme.palette.primary.main,
+                                  fontSize: '0.7rem',
+                                  height: 22,
+                                  fontWeight: 'medium'
+                                }}
+                              />
+                            ))}
+                          </Box>
+                        </Card>
+                      </Box>
+
+                      {/* Right Column - Developer Summary */}
+                      <Box sx={{ width: '50%' }}>
+                        <Card sx={{ 
+                          height: '100%', 
+                          borderRadius: 2,
+                          p: 1.5,
+                          display: 'flex',
+                          flexDirection: 'column'
+                        }}>
+                          <Typography variant="subtitle2" fontWeight="bold">
+                            Developer Summary
+                          </Typography>
+                          <Typography variant="body2" sx={{ display: 'block', mt: 1, mb: 1, fontSize: '0.8rem' }}>
+                            John has made 356 commits and 87 PRs with 42 code reviews, showing strong collaboration and consistent activity.
+                          </Typography>
+                          
+                          <Box sx={{ 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            gap: 1,
+                            mt: 'auto',
+                            mb: 0.5
+                          }}>
+                            <Box>
+                              <Typography variant="body2" fontWeight="bold" sx={{ fontSize: '0.8rem' }}>
+                                Strengths
+                              </Typography>
+                              
+                              <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                                <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'success.main', mr: 1.5, flexShrink: 0 }} />
+                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Excellent consistency (76.2% active days)</Typography>
+                              </Box>
+                            </Box>
+                            
+                            <Box>
+                              <Typography variant="body2" fontWeight="bold" sx={{ fontSize: '0.8rem' }}>
+                                Considerations
+                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                                <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main', mr: 1.5, flexShrink: 0 }} />
+                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Primarily focused on frontend technologies</Typography>
+                              </Box>
+                            </Box>
+                          </Box>
+                        </Card>
+                      </Box>
+                    </Box>
                   </Box>
                 </Box>
               </Grid>
