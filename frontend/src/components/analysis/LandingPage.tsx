@@ -108,8 +108,8 @@ const LandingPage: React.FC = () => {
         {/* Hero Section */}
         <Box
           sx={{
-            pt: { xs: 10, sm: 15 },
-            pb: { xs: 8, sm: 12 },
+            pt: { xs: 7, sm: 10 },
+            pb: { xs: 3, sm: 6 },
             background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.9)} 0%, ${alpha(
               theme.palette.secondary.main,
               0.8
@@ -403,7 +403,7 @@ const LandingPage: React.FC = () => {
 
         <Container maxWidth="lg">
           {/* Features Section */}
-          <Box sx={{ py: 8 }}>
+          <Box sx={{ py: 3}}>
             <Typography
               variant="h2"
               component="h2"
@@ -471,7 +471,7 @@ const LandingPage: React.FC = () => {
           <Divider sx={{ my: 4 }} />
 
           {/* Benefits Section */}
-          <Box sx={{ py: 8 }}>
+          <Box sx={{ py: 3 }}>
             <Typography
               variant="h2"
               component="h2"
@@ -537,7 +537,7 @@ const LandingPage: React.FC = () => {
           </Box>
 
           {/* CTA Section */}
-          <Box sx={{ py: 8, textAlign: 'center' }}>
+          <Box sx={{ py: 3, textAlign: 'center' }}>
             <Card
               sx={{
                 p: 6,
