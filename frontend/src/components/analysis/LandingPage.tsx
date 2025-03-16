@@ -28,10 +28,12 @@ import {
 } from '@mui/icons-material';
 import AnalysisResults from './AnalysisResults';
 import LoadingOverlay from '../common/LoadingOverlay';
+import WaitingListModal from '../common/WaitingListModal';
 import useGitHubAnalysis from '../../hooks/useGitHubAnalysis';
 
 const LandingPage: React.FC = () => {
   const [username, setUsername] = useState('');
+  const [waitingListOpen, setWaitingListOpen] = useState(false);
   const { loading, error, analysisData, analyzeProfile, resetAnalysis } = useGitHubAnalysis();
   const theme = useTheme();
 
@@ -39,6 +41,14 @@ const LandingPage: React.FC = () => {
     if (username.trim()) {
       analyzeProfile(username);
     }
+  };
+
+  const openWaitingList = () => {
+    setWaitingListOpen(true);
+  };
+
+  const closeWaitingList = () => {
+    setWaitingListOpen(false);
   };
 
   const features = [
@@ -80,15 +90,17 @@ const LandingPage: React.FC = () => {
   if (analysisData) {
     return (
       <Container maxWidth="lg" sx={{ mt: 8 }}>
-        <Button
-          variant="outlined"
-          color="primary"
-          onClick={resetAnalysis}
-          sx={{ mb: 4 }}
-        >
-          ← Back to Search
-        </Button>
-        <AnalysisResults data={analysisData} />
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={resetAnalysis}
+          >
+            ← Back to Search
+          </Button>
+        </Box>
+        <AnalysisResults data={analysisData} onJoinWaitingList={openWaitingList} />
+        <WaitingListModal open={waitingListOpen} onClose={closeWaitingList} />
       </Container>
     );
   }
@@ -96,6 +108,7 @@ const LandingPage: React.FC = () => {
   return (
     <>
       {loading && <LoadingOverlay />}
+      <WaitingListModal open={waitingListOpen} onClose={closeWaitingList} />
       <Box
         sx={{
           minHeight: '100vh',
@@ -217,7 +230,28 @@ const LandingPage: React.FC = () => {
                   </Button>
                 </Paper>
 
-                
+                <Box sx={{ display: 'flex', mt: 2, alignItems: 'center' }}>
+                  <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.8)', mr: 2 }}>
+                    Want early access to all features?
+                  </Typography>
+                  <Button 
+                    variant="outlined" 
+                    color="inherit" 
+                    size="small"
+                    onClick={openWaitingList}
+                    sx={{ 
+                      borderColor: 'rgba(255,255,255,0.5)',
+                      color: 'white',
+                      '&:hover': {
+                        borderColor: 'white',
+                        backgroundColor: 'rgba(255,255,255,0.1)'
+                      }
+                    }}
+                  >
+                    Join Waiting List
+                  </Button>
+                </Box>
+
               </Grid>
               <Grid item xs={12} md={5} sx={{ display: { xs: 'none', md: 'block' } }}>
                 <Box
@@ -563,10 +597,10 @@ const LandingPage: React.FC = () => {
                 variant="contained"
                 color="primary"
                 size="large"
-                startIcon={<GitHub />}
+                onClick={openWaitingList}
                 sx={{ px: 4, py: 1.5, borderRadius: 2, fontWeight: 600 }}
               >
-                Sign Up for Free
+                Join Waiting List
               </Button>
             </Card>
           </Box>
