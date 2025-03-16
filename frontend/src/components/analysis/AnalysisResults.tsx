@@ -36,6 +36,7 @@ import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../t
 
 interface Props {
   data: AnalysisResponse;
+  onJoinWaitingList?: () => void;
 }
 
 // Helper function to determine rating based on value
@@ -237,7 +238,7 @@ const mapRepositories = (repoData: any[]): Repository[] => {
   });
 };
 
-const AnalysisResults: React.FC<Props> = ({ data }) => {
+const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
   const theme = useTheme();
   console.log("Full analysis data:", JSON.stringify(data, null, 2));
 
@@ -791,6 +792,16 @@ const AnalysisResults: React.FC<Props> = ({ data }) => {
             >
               Share Profile
             </Button>
+            {onJoinWaitingList && (
+              <Button 
+                variant="contained" 
+                color="secondary" 
+                onClick={onJoinWaitingList}
+                sx={{ borderRadius: 2, px: 3, fontWeight: 600 }}
+              >
+                Join Waiting List
+              </Button>
+            )}
           </Box>
         </Grid>
       </Grid>

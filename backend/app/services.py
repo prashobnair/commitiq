@@ -96,52 +96,52 @@ TIME_WINDOW_DAYS = 365  # Analyze 1 year of history instead of 2 for better perf
 
 # Normalization thresholds (min, max) for percentile-based normalization
 NORMALIZATION_THRESHOLDS = {
-    'pulls': (5, 100),
-    'commits': (10, 250),
-    'reviews': (5, 100),
-    'issues': (2, 50),
-    'repos_impact': (10, 100),
-    'consistency': (10, 35),
-    'technical_impact': (0.1, 4.0),
-    'ecosystem_impact': (0, 500)
+    'pulls': (0, 1.0),
+    'commits': (0, 12.0),
+    'reviews': (0, 1.0),
+    'issues': (0, 1.0),
+    'repos_impact': (0, 0.02),
+    'consistency': (0, 0.28),
+    'technical_impact': (0.0, 0.015),
+    'ecosystem_impact': (0.0, 0.005)
 }
 
 # Weights for repository impact calculation
 REPO_IMPACT_WEIGHTS = {
-    'technical': 0.7,
-    'ecosystem': 0.3
+    'technical': 0.65,
+    'ecosystem': 0.35
 }
 
 # Weights for technical impact sub-components
 TECHNICAL_IMPACT_WEIGHTS = {
-    'pr_acceptance': 0.6,
-    'review_activity': 0.4
+    'pr_acceptance': 0.85,
+    'review_activity': 0.15
 }
 
 # Weights for final impact score components
 IMPACT_SCORE_WEIGHTS = {
-    'pulls': 0.27,
-    'commits': 0.225,
-    'reviews': 0.135,
-    'issues': 0.09,
-    'repos_impact': 0.18,
-    'consistency': 0.10
+    'pulls': 0.35,
+    'commits': 0.30,
+    'reviews': 0.10,
+    'issues': 0.10,
+    'repos_impact': 0.10,
+    'consistency': 0.05
 }
 
 # Collaboration factor calculation constants
 COLLAB_FACTOR = {
     'base': 1.0,
-    'log_factor': 0.5,
-    'max_value': 2.5
+    'log_factor': 0.4,
+    'max_value': 2
 }
 
 # Review activity normalization
 REVIEW_ACTIVITY = {
-    'normalization_factor': 100.0  # Normalize review comments per 100
+    'normalization_factor': 1.0  # Normalize review comments per 100
 }
 
 # Contribution ratio exponent (diminishing returns for higher contribution percentages)
-CONTRIBUTION_RATIO_EXPONENT = 0.7
+CONTRIBUTION_RATIO_EXPONENT = 1.0
 
 # Caching decorator
 def cache_response(ttl=3600):
