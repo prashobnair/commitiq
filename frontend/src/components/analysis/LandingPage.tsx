@@ -32,7 +32,7 @@ import {
 import AnalysisResults from './AnalysisResults';
 import LoadingOverlay from '../common/LoadingOverlay';
 import WaitingListModal from '../common/WaitingListModal';
-import useGitHubAnalysis from '../../hooks/useGitHubAnalysis';
+import { useAnalysisContext } from '../../contexts/AnalysisContext';
 
 // Examples for the placeholder tooltip
 const usernameExamples = [
@@ -46,7 +46,7 @@ const usernameExamples = [
 const LandingPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [waitingListOpen, setWaitingListOpen] = useState(false);
-  const { loading, error, analysisData, analyzeProfile, resetAnalysis } = useGitHubAnalysis();
+  const { loading, error, analysisData, analyzeProfile, resetAnalysis } = useAnalysisContext();
   const theme = useTheme();
 
   const handleAnalyze = () => {
@@ -84,7 +84,7 @@ const LandingPage: React.FC = () => {
   const benefits = [
     {
       icon: <Speed />,
-      title: 'Faster Hiring',
+      title: 'Faster Screening',
       description: 'Quickly filter out top candidates from hundreds of profiles based on actual contributions',
     },
     {
@@ -102,15 +102,6 @@ const LandingPage: React.FC = () => {
   if (analysisData) {
     return (
       <Container maxWidth="lg" sx={{ mt: 8 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-          <Button
-            variant="outlined"
-            color="primary"
-            onClick={resetAnalysis}
-          >
-            ← Back to Search
-          </Button>
-        </Box>
         <AnalysisResults data={analysisData} onJoinWaitingList={openWaitingList} />
         <WaitingListModal open={waitingListOpen} onClose={closeWaitingList} />
       </Container>

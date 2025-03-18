@@ -31,8 +31,11 @@ import {
   Star,
   BarChart,
   Code as CodeIcon,
+  ArrowBack
 } from '@mui/icons-material';
 import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../types/analysis';
+import ShareOptions from './ShareOptions';
+import { useAnalysisContext } from '../../contexts/AnalysisContext';
 
 interface Props {
   data: AnalysisResponse;
@@ -240,6 +243,7 @@ const mapRepositories = (repoData: any[]): Repository[] => {
 
 const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
   const theme = useTheme();
+  const { resetAnalysis } = useAnalysisContext();
   console.log("Full analysis data:", JSON.stringify(data, null, 2));
 
   // Ensure we have valid data
@@ -396,9 +400,26 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
     },
   ];
 
+  // Extract analysis ID for share/download functionality
+  const analysisId = (data as any).id || 0;
+  const githubUsername = (data as any).github_username || data.analysis.username || '';
+
   return (
     <Box sx={{ py: 4 }}>
       <Grid container spacing={3} display="flex" flexDirection={{ xs: 'column', md: 'row' }}>
+        {/* Back to Search Button */}
+        <Grid item xs={12}>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={resetAnalysis}
+            startIcon={<ArrowBack />}
+            sx={{ mb: 3 }}
+          >
+            Back to Search
+          </Button>
+        </Grid>
+        
         {/* Developer Profile Header */}
         <Grid item xs={12}>
           <Card sx={{ mb: 3, overflow: 'hidden', borderRadius: 3 }}>
@@ -773,31 +794,20 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
           </Grid>
         )}
         
-        {/* Action Buttons */}
+        {/* Replace the Action Buttons with ShareOptions component */}
         <Grid item xs={12}>
-          <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center', gap: 2 }}>
-            <Button 
-              variant="contained" 
-              color="primary" 
-              startIcon={<Download />}
-              sx={{ borderRadius: 2, px: 3 }}
-            >
-              Download Report
-            </Button>
-            <Button 
-              variant="outlined" 
-              color="primary" 
-              startIcon={<Share />}
-              sx={{ borderRadius: 2, px: 3 }}
-            >
-              Share Profile
-            </Button>
+          <Box sx={{ mt: 4, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <ShareOptions 
+              analysisId={analysisId} 
+              githubUsername={githubUsername} 
+            />
+            
             {onJoinWaitingList && (
               <Button 
                 variant="contained" 
                 color="secondary" 
                 onClick={onJoinWaitingList}
-                sx={{ borderRadius: 2, px: 3, fontWeight: 600 }}
+                sx={{ borderRadius: 2, px: 3, fontWeight: 600, mt: 2 }}
               >
                 Join Waiting List
               </Button>

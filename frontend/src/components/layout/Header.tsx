@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import WaitingListModal from '../common/WaitingListModal';
 import logoSrc from '../../logo.svg';
+import { useAnalysisContext } from '../../contexts/AnalysisContext';
 
 // API URL from environment variables
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -29,6 +30,13 @@ const Header: React.FC = () => {
   const [waitingListOpen, setWaitingListOpen] = useState(false);
   const [waitlistCount, setWaitlistCount] = useState<number | null>(null);
   const [waitlistMessage, setWaitlistMessage] = useState<string>('');
+  const { resetAnalysis } = useAnalysisContext();
+  
+  // Function to handle logo click - reset analysis to return to search
+  const handleLogoClick = () => {
+    resetAnalysis();
+    console.log('Logo clicked, resetting analysis');
+  };
   
   // Fetch waiting list count when component mounts
   useEffect(() => {
@@ -81,25 +89,39 @@ const Header: React.FC = () => {
       <AppBar position="fixed" color="default" elevation={1}>
         <Container maxWidth="xl">
           <Toolbar disableGutters>
-            <img 
-              src={logoSrc} 
-              alt="CommitIQ Logo" 
-              style={{ height: '40px', width: 'auto', marginRight: '8px' }} 
-            />
-            <Typography
-              variant="h6"
-              noWrap
-              component="div"
-              sx={{
-                flexGrow: 1,
-                display: 'flex',
-                alignItems: 'center',
-                color: theme.palette.primary.main,
-                fontWeight: 600,
+            <Box 
+              onClick={handleLogoClick}
+              sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                cursor: 'pointer',
+                '&:hover': {
+                  opacity: 0.8
+                }
               }}
             >
-              CommitIQ
-            </Typography>
+              <img 
+                src={logoSrc} 
+                alt="CommitIQ Logo" 
+                style={{ height: '40px', width: 'auto', marginRight: '8px' }} 
+              />
+              <Typography
+                variant="h4"
+                noWrap
+                component="div"
+                sx={{
+                  flexGrow: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: theme.palette.primary.main,
+                  fontWeight: 600,
+                }}
+              >
+                CommitIQ
+              </Typography>
+            </Box>
+
+            <Box sx={{ flexGrow: 1 }} />
 
             <Box sx={{ display: 'flex', gap: 2 }}>
               <Tooltip title={waitlistMessage} arrow>
