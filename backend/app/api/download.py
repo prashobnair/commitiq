@@ -11,9 +11,14 @@ import os
 import tempfile
 import json
 from datetime import datetime
-import pdfkit
-from jinja2 import Environment, FileSystemLoader
 import base64
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -82,9 +87,9 @@ def download_report(analysis_id):
             
             # Include the full analysis data if available
             if details and details.get('full_analysis_data'):
-                result['analysis'] = details['full_analysis_data'].get('analysis', {})
+                result['analysis'] = details['full_analysis_data']
             elif analysis.get('full_analysis_data'):
-                result['analysis'] = analysis['full_analysis_data'].get('analysis', {})
+                result['analysis'] = analysis['full_analysis_data']
             
             # Generate filename
             safe_username = ''.join(c if c.isalnum() else '_' for c in analysis['github_username'])
@@ -102,9 +107,8 @@ def download_report(analysis_id):
                 mimetype='application/json'
             )
             
-        # For PDF format
-        # Prepare data for template
-        # Extract data for the report
+        # For PDF format using ReportLab (no external dependencies)
+        # Prepare data for the report
         full_data = {}
         if details and details.get('full_analysis_data'):
             full_data = details['full_analysis_data']
@@ -116,214 +120,276 @@ def download_report(analysis_id):
         
         # Generate a developer summary if none exists
         developer_summary = ''
-        if analysis_data:
-            try:
-                username = analysis_data.get('username', analysis['github_username'])
-                name = analysis_data.get('name', username)
-                
-                # Extract contribution metrics
-                commits = contributions.get('commits', 0)
-                pulls = contributions.get('pulls', 0)
-                issues = contributions.get('issues', 0)
-                reviews = contributions.get('reviews', 0)
-                consistency = contributions.get('consistency', 0)
-                
-                # Generate a simple summary
-                developer_summary = f"{name} has made {commits} commits and {pulls} pull requests on GitHub. "
-                
-                if consistency > 0:
-                    consistency_pct = consistency * 100
-                    if consistency_pct > 50:
-                        developer_summary += f"They show consistent activity with {consistency_pct:.1f}% active days. "
-                    else:
-                        developer_summary += f"Their activity shows some gaps with {consistency_pct:.1f}% active days. "
-                
-                if issues > 0:
-                    developer_summary += f"They've raised {issues} issues "
-                    if reviews > 0:
-                        developer_summary += f"and provided {reviews} code reviews. "
-                    else:
-                        developer_summary += ". "
-                elif reviews > 0:
-                    developer_summary += f"They've provided {reviews} code reviews. "
-                    
-                # Add impact score context
-                impact_score = float(analysis['impact_score']) if analysis['impact_score'] else 0.0
-                if impact_score > 80:
-                    developer_summary += "Overall, they demonstrate exceptional contribution patterns."
-                elif impact_score > 60:
-                    developer_summary += "Overall, they show strong contribution patterns."
-                elif impact_score > 40:
-                    developer_summary += "Overall, they show moderate contribution activity."
-                else:
-                    developer_summary += "Their GitHub activity indicates they're still developing their contribution patterns."
-            except Exception as e:
-                logger.error(f"Error generating developer summary: {e}")
-                # Default summary if generation fails
-                developer_summary = f"GitHub profile analysis for {analysis['github_username']}"
+        name = analysis_data.get('name', '')
+        username = analysis_data.get('username', analysis['github_username'])
+        commits = contributions.get('commits', 0)
+        pulls = contributions.get('pulls', 0)
+        consistency = contributions.get('consistency', 0)
+        reviews = contributions.get('reviews', 0)
         
-        template_data = {
-            'github_username': analysis['github_username'],
-            'impact_score': float(analysis['impact_score']) if analysis['impact_score'] else 0.0,
-            'developer_summary': developer_summary,
-            'analyzed_at': analysis['analyzed_at'].strftime('%Y-%m-%d %H:%M:%S') if analysis['analyzed_at'] else datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'total_commits': contributions.get('commits', 0),
-            'pull_requests': contributions.get('pulls', 0),
-            'issues': contributions.get('issues', 0),
-            'reviews': contributions.get('reviews', 0),
-            'avatar_url': analysis_data.get('avatarUrl', ''),
-            'name': analysis_data.get('name', ''),
-            'company': analysis_data.get('company', ''),
-            'location': analysis_data.get('location', ''),
-            'email': analysis_data.get('email', ''),
-            'followers': analysis_data.get('followers', 0),
-            'following': analysis_data.get('following', 0),
-            'top_languages': contributions.get('top_languages', []),
-            'top_repositories': contributions.get('top_repositories', []),
-            'date_generated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'commitiq_logo_url': '/static/images/logo.png'  # Path to logo
-        }
-        
-        # Load and render template
-        templates_dir = os.path.join(current_app.root_path, 'templates')
-        
-        # Check if the template directory exists, if not create it
-        if not os.path.exists(templates_dir):
-            os.makedirs(templates_dir)
+        # Helper function to determine rating based on value
+        def get_rating(value, type_str):
+            if type_str == 'prs':
+                if value > 50: return 'High'
+                if value > 20: return 'Above Average'
+                if value > 10: return 'Moderate'
+                return 'Low'
+            elif type_str == 'commits':
+                if value > 300: return 'High'
+                if value > 100: return 'Above Average'
+                if value > 50: return 'Moderate'
+                return 'Low'
+            elif type_str == 'consistency':
+                if value > 0.8: return 'Excellent'
+                if value > 0.6: return 'Good'
+                if value > 0.4: return 'Moderate'
+                return 'Inconsistent'
+            return 'Moderate'
             
-        # Check if the report template exists, if not create a basic one
-        template_path = os.path.join(templates_dir, 'report_template.html')
-        if not os.path.exists(template_path):
-            with open(template_path, 'w') as f:
-                f.write('''
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>GitHub Analysis Report - {{ github_username }}</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
-                        .header { text-align: center; margin-bottom: 30px; }
-                        .logo { max-width: 200px; }
-                        .summary { background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-                        .score { font-size: 24px; font-weight: bold; color: #0066cc; }
-                        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-                        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-                        th { background-color: #f2f2f2; }
-                        .section { margin: 30px 0; }
-                        .footer { margin-top: 50px; font-size: 12px; color: #666; text-align: center; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <h1>GitHub Developer Analysis Report</h1>
-                        <p>{{ github_username }}</p>
-                        <p>Generated on {{ date_generated }}</p>
-                    </div>
-                    
-                    <div class="summary">
-                        <h2>Developer Summary</h2>
-                        <p>{{ developer_summary }}</p>
-                        <p><strong>Impact Score:</strong> <span class="score">{{ impact_score }}</span> out of 100</p>
-                    </div>
-                    
-                    <div class="section">
-                        <h2>Developer Profile</h2>
-                        <table>
-                            <tr><th>Username</th><td>{{ github_username }}</td></tr>
-                            {% if name %}<tr><th>Name</th><td>{{ name }}</td></tr>{% endif %}
-                            {% if company %}<tr><th>Company</th><td>{{ company }}</td></tr>{% endif %}
-                            {% if location %}<tr><th>Location</th><td>{{ location }}</td></tr>{% endif %}
-                            {% if email %}<tr><th>Email</th><td>{{ email }}</td></tr>{% endif %}
-                            <tr><th>Followers</th><td>{{ followers }}</td></tr>
-                            <tr><th>Following</th><td>{{ following }}</td></tr>
-                        </table>
-                    </div>
-                    
-                    <div class="section">
-                        <h2>Contribution Metrics</h2>
-                        <table>
-                            <tr><th>Total Commits</th><td>{{ total_commits }}</td></tr>
-                            <tr><th>Pull Requests</th><td>{{ pull_requests }}</td></tr>
-                            <tr><th>Issues</th><td>{{ issues }}</td></tr>
-                            <tr><th>Code Reviews</th><td>{{ reviews }}</td></tr>
-                        </table>
-                    </div>
-                    
-                    {% if top_languages %}
-                    <div class="section">
-                        <h2>Top Languages</h2>
-                        <table>
-                            <tr><th>Language</th><th>Usage Percentage</th></tr>
-                            {% for lang in top_languages %}
-                            <tr><td>{{ lang.name }}</td><td>{{ lang.percentage }}%</td></tr>
-                            {% endfor %}
-                        </table>
-                    </div>
-                    {% endif %}
-                    
-                    {% if top_repositories %}
-                    <div class="section">
-                        <h2>Top Repositories</h2>
-                        <table>
-                            <tr><th>Repository</th><th>Stars</th><th>Forks</th><th>Primary Language</th></tr>
-                            {% for repo in top_repositories %}
-                            <tr>
-                                <td>{{ repo.name }}</td>
-                                <td>{{ repo.stars }}</td>
-                                <td>{{ repo.forks }}</td>
-                                <td>{{ repo.primary_language or 'N/A' }}</td>
-                            </tr>
-                            {% endfor %}
-                        </table>
-                    </div>
-                    {% endif %}
-                    
-                    <div class="footer">
-                        <p>© CommitIQ - All rights reserved</p>
-                        <p>This report contains data from public GitHub repositories and is intended for recruitment and evaluation purposes only.</p>
-                    </div>
-                </body>
-                </html>
-                ''')
+        pr_rating = get_rating(pulls, 'prs')
+        commit_rating = get_rating(commits, 'commits')
+        consistency_rating = get_rating(consistency, 'consistency')
+        
+        developer_name = name or username
+        consistency_percent = consistency * 100 if isinstance(consistency, (int, float)) else 0
+        
+        developer_summary = f"{developer_name} has made {commits} commits and {pulls} pull requests, showing {pr_rating.lower()} collaboration. Their consistency is {consistency_percent:.1f}%, indicating {consistency_rating.lower()} regular activity. With {reviews} code reviews, they actively engage in code discussions. Overall, they're a {commit_rating.lower()} contributor who {'frequently' if pulls > 30 else 'occasionally'} participates in various projects."
+        
+        # Determine overall rating
+        impact_score = float(analysis['impact_score']) if analysis['impact_score'] else 0.0
+        overall_rating = 'Exceptional Contributor'
+        if impact_score <= 40:
+            overall_rating = 'Developing Contributor'
+        elif impact_score <= 50:
+            overall_rating = 'Solid Contributor'
+        elif impact_score <= 60:
+            overall_rating = 'Above Average Contributor'
+        elif impact_score <= 70:
+            overall_rating = 'Strong Contributor'
+        elif impact_score <= 80:
+            overall_rating = 'Exceptional Contributor'
+            
+        # Determine strengths and considerations
+        strengths = []
+        considerations = []
+        
+        # Analyze strengths
+        if pulls > 30:
+            strengths.append('High number of pull requests, indicating strong collaboration')
+        if consistency > 0.7:
+            strengths.append(f'Excellent consistency ({consistency_percent:.1f}% active days)')
+        if reviews > 20:
+            strengths.append('Frequent code reviews, showing willingness to provide feedback')
+        if commits > 200:
+            strengths.append('Significant number of commits, demonstrating active development')
+            
+        # Analyze considerations
+        repos_impact = contributions.get('repos_impact', 0)
+        if repos_impact < 0.03:
+            considerations.append('Lower repository impact score—contributions may be in less popular repos')
+        if pulls < 10 and commits > 100:
+            considerations.append('High commits but low PRs may indicate solo work rather than collaboration')
+        if consistency < 0.5:
+            considerations.append('Inconsistent contribution pattern may indicate sporadic engagement')
+            
+        # Ensure we have at least one strength
+        if not strengths:
+            strengths.append('Shows engagement with GitHub projects')
+            
+        # If no considerations, add a neutral one
+        if not considerations:
+            considerations.append('No significant concerns identified in the contribution pattern')
+            
+        # Extract top languages and repositories
+        top_languages = contributions.get('top_languages', [])
+        top_repositories = contributions.get('top_repositories', [])
+        
+        # Create a PDF using ReportLab
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        
+        # Create custom styles with unique names
+        title_style = ParagraphStyle(
+            name='CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=20,
+            alignment=TA_CENTER,
+            spaceAfter=12
+        )
+        
+        subtitle_style = ParagraphStyle(
+            name='CustomSubtitle',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=6
+        )
+        
+        center_style = ParagraphStyle(
+            name='CustomCenter',
+            parent=styles['Normal'],
+            alignment=TA_CENTER
+        )
+        
+        # Build the PDF content
+        elements = []
+        
+        # Title
+        elements.append(Paragraph("GitHub Developer Impact Report", title_style))
+        elements.append(Paragraph(f"Generated by CommitIQ.ai on {datetime.now().strftime('%Y-%m-%d %H:%M')}", center_style))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Developer Profile
+        elements.append(Paragraph(f"Developer Profile: {username}", subtitle_style))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        # Impact Score
+        elements.append(Paragraph(f"Impact Score: {impact_score:.1f}/100 - {overall_rating}", styles['Normal']))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        # Summary
+        elements.append(Paragraph("Developer Summary:", subtitle_style))
+        elements.append(Paragraph(developer_summary, styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Activity Metrics
+        elements.append(Paragraph("Activity Metrics", subtitle_style))
+        
+        metrics_data = [
+            ["Metric", "Value", "Rating"],
+            ["Total Commits", str(commits), get_rating(commits, 'commits')],
+            ["Pull Requests", str(pulls), get_rating(pulls, 'prs')],
+            ["Issues Raised", str(contributions.get('issues', 0)), ""],
+            ["Code Reviews", str(reviews), get_rating(reviews, 'prs')],
+            ["Consistency", f"{consistency_percent:.1f}%", get_rating(consistency, 'consistency')],
+        ]
+        
+        metrics_table = Table(metrics_data, colWidths=[2*inch, 1*inch, 2*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        
+        elements.append(metrics_table)
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Strengths and Considerations
+        elements.append(Paragraph("Key Strengths", subtitle_style))
+        for strength in strengths:
+            elements.append(Paragraph(f"• {strength}", styles['Normal']))
+        elements.append(Spacer(1, 0.1 * inch))
+        
+        elements.append(Paragraph("Considerations", subtitle_style))
+        for consideration in considerations:
+            elements.append(Paragraph(f"• {consideration}", styles['Normal']))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Top Languages
+        if top_languages:
+            elements.append(Paragraph("Most Used Languages", subtitle_style))
+            
+            lang_data = [["Language", "Percentage"]]
+            for lang in top_languages:
+                # Handle different language data formats
+                lang_name = lang.get('name', lang.get('language', 'Unknown'))
                 
-        env = Environment(loader=FileSystemLoader(templates_dir))
-        template = env.get_template('report_template.html')
-        
-        # Render the template
-        html_content = template.render(**template_data)
-        
-        # Generate PDF
-        pdf_options = {
-            'page-size': 'Letter',
-            'encoding': 'UTF-8',
-            'margin-top': '0.75in',
-            'margin-right': '0.75in',
-            'margin-bottom': '0.75in',
-            'margin-left': '0.75in',
-            'title': f'GitHub Analysis Report - {analysis["github_username"]}',
-            'footer-right': 'Page [page] of [topage]',
-            'footer-font-size': '8'
-        }
-        
-        # Create a temporary file for the PDF
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-            pdf_path = tmp.name
+                # Check if percentage is already in percentage format (> 1) or decimal format (< 1)
+                lang_percentage = 0
+                if 'percentage' in lang:
+                    lang_percentage = lang['percentage']
+                    if lang_percentage <= 1:
+                        lang_percentage *= 100
+                elif 'percent' in lang:
+                    lang_percentage = lang['percent']
+                    if lang_percentage <= 1:
+                        lang_percentage *= 100
+                    
+                lang_data.append([lang_name, f"{lang_percentage:.1f}%"])
             
-        # Try to generate the PDF
-        try:
-            pdfkit.from_string(html_content, pdf_path, options=pdf_options)
-        except Exception as e:
-            logger.error(f"PDF generation error: {e}")
-            return jsonify({'error': 'Failed to generate PDF report. See server logs for details.'}), 500
+            lang_table = Table(lang_data, colWidths=[3*inch, 2*inch])
+            lang_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
             
+            elements.append(lang_table)
+            elements.append(Spacer(1, 0.2 * inch))
+        
+        # Top Repositories
+        if top_repositories:
+            elements.append(Paragraph("Top Repositories", subtitle_style))
+            
+            repo_data = [["Repository", "Stars", "Forks", "Language"]]
+            for repo in top_repositories:
+                repo_name = repo.get('name', 'Unknown')
+                repo_stars = repo.get('stars', 0)
+                repo_forks = repo.get('forks', 0)
+                repo_lang = repo.get('primary_language', 'N/A')
+                
+                repo_data.append([repo_name, str(repo_stars), str(repo_forks), repo_lang or 'N/A'])
+            
+            repo_table = Table(repo_data, colWidths=[2.5*inch, 1*inch, 1*inch, 1.5*inch])
+            repo_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            
+            elements.append(repo_table)
+            elements.append(Spacer(1, 0.2 * inch))
+        
+        # Footer
+        elements.append(Paragraph(
+            "This report was generated by CommitIQ.ai, a platform that analyzes GitHub activity to provide objective insights into developer skills and contributions.",
+            center_style
+        ))
+        elements.append(Spacer(1, 0.1 * inch))
+        elements.append(Paragraph(
+            f"© {datetime.now().year} CommitIQ. All rights reserved.",
+            center_style
+        ))
+        
+        # Build the document
+        doc.build(elements)
+        
+        # Reset buffer position to the beginning
+        buffer.seek(0)
+        
         # Create a sanitized filename for the download
         safe_username = ''.join(c if c.isalnum() else '_' for c in analysis['github_username'])
         filename = f"CommitIQ_Analysis_{safe_username}_{datetime.now().strftime('%Y%m%d')}.pdf"
         
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(buffer.getvalue())
+            tmp_path = tmp.name
+            
         # Send the file
         return send_file(
-            pdf_path,
+            tmp_path,
             as_attachment=True,
             download_name=filename,
             mimetype='application/pdf'
@@ -331,7 +397,7 @@ def download_report(analysis_id):
         
     except Exception as e:
         logger.error(f"Error generating report: {e}")
-        return jsonify({'error': 'Failed to generate report. See server logs for details.'}), 500
+        return jsonify({'error': f'Failed to generate report: {str(e)}'}), 500
     finally:
         if conn:
             conn.close() 

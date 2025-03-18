@@ -21,6 +21,7 @@ import {
   Select,
   MenuItem,
   InputLabel,
+  InputAdornment,
 } from '@mui/material';
 import {
   Share as ShareIcon,
@@ -133,21 +134,35 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   
   const handleDownload = () => {
     setIsLoading(true);
-    try {
-      // Using the new download endpoint
-      window.open(`${API_BASE_URL}/api/download/report/${analysisId}?format=${downloadFormat}`, '_blank');
-      setSnackbarMessage('Download initiated!');
-      setSnackbarSeverity('success');
-      setSnackbarOpen(true);
-      setDownloadDialogOpen(false);
-    } catch (error) {
-      console.error('Error initiating download:', error);
-      setSnackbarMessage('Failed to download. Please try again.');
-      setSnackbarSeverity('error');
-      setSnackbarOpen(true);
-    } finally {
-      setIsLoading(false);
-    }
+    
+    // Construct the correct URL
+    const downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=${downloadFormat}`;
+    console.log(`Initiating download from: ${downloadUrl}`);
+    
+    // Create a fetch request to verify the endpoint works before opening it
+    fetch(downloadUrl)
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(data => {
+            throw new Error(data.error || 'Failed to download report');
+          });
+        }
+        
+        // If the response is OK, open the download in a new tab
+        window.open(downloadUrl, '_blank');
+        setSnackbarMessage('Download initiated successfully!');
+        setSnackbarSeverity('success');
+        setDownloadDialogOpen(false);
+      })
+      .catch(error => {
+        console.error('Error downloading report:', error);
+        setSnackbarMessage(`Download failed: ${error.message}`);
+        setSnackbarSeverity('error');
+      })
+      .finally(() => {
+        setIsLoading(false);
+        setSnackbarOpen(true);
+      });
   };
   
   const handleSnackbarClose = () => {
