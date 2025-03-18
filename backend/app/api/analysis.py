@@ -1,6 +1,7 @@
 # backend/app/api/analysis.py
 from flask import Blueprint, jsonify
 from ..services import aggregate_user_data, fetch_all_data, calculate_impact_score
+from ..utils import normalize_github_username
 import logging
 
 # Get module logger
@@ -10,10 +11,21 @@ analysis_bp = Blueprint('analysis', __name__)
 
 @analysis_bp.route('/analyze/<username>', methods=['GET'])
 def analyze_user(username):
-    logger.info(f"Analyzing user: {username}")  # Log entry point
+    logger.info(f"Analyzing user input: {username}")  # Log the original input
+    
+    # Normalize the GitHub username
+    normalized_username = normalize_github_username(username)
+    
+    if not normalized_username:
+        logger.error(f"Invalid GitHub username format: {username}")
+        return jsonify({'error': 'Invalid GitHub username format'}), 400
+    
+    # Log the normalized username if it's different
+    if normalized_username != username:
+        logger.info(f"Normalized username: {normalized_username}")
+    
     try:
-        
-        github_data = fetch_all_data(username)
+        github_data = fetch_all_data(normalized_username)
         logger.debug(f"Github data fetched: {github_data}")
         
         # Check for errors in github_data
@@ -22,7 +34,7 @@ def analyze_user(username):
             return jsonify({'error': github_data['error']}), 500
             
         # Process the github data using aggregate_user_data
-        aggregated_data = aggregate_user_data(username, github_data)
+        aggregated_data = aggregate_user_data(normalized_username, github_data)
         logger.debug(f"Aggregated data: {aggregated_data}")
 
         # Check for errors returned by aggregate_user_data

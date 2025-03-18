@@ -141,7 +141,11 @@ def join_waitlist():
                     conn.commit()
             
             if existing_user:
-                # User already in waitlist, update feedback if provided
+                # User already in waitlist, determine what needs to be updated
+                updates_needed = []
+                update_params = []
+                
+                # Handle feedback update
                 if feedback:
                     # Concatenate new feedback with existing feedback
                     # Handle None feedback safely
@@ -152,14 +156,20 @@ def join_waitlist():
                     else:
                         updated_feedback = feedback
                     
-                    cur.execute(
-                        'UPDATE waitlist SET feedback = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s',
-                        (updated_feedback, existing_user['id'])
-                    )
+                    updates_needed.append("feedback = %s")
+                    update_params.append(updated_feedback)
+                
+                # Only perform update if there are changes
+                if updates_needed:
+                    update_query = f"UPDATE waitlist SET {', '.join(updates_needed)}, updated_at = CURRENT_TIMESTAMP WHERE id = %s"
+                    update_params.append(existing_user['id'])
+                    
+                    cur.execute(update_query, tuple(update_params))
                     conn.commit()
+                    
                     return jsonify({
                         'status': 'already_joined',
-                        'message': 'You are already on our waiting list. Thank you for your additional feedback!'
+                        'message': 'You are already on our waiting list. Your information has been updated. Thank you!'
                     })
                 else:
                     return jsonify({
