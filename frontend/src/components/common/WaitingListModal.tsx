@@ -16,18 +16,35 @@ import {
 } from '@mui/material';
 import { Close as CloseIcon } from '@mui/icons-material';
 
+// API URL - should be in an environment variable in production
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+
 interface WaitingListModalProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface WaitlistResponse {
+  status: 'success' | 'already_joined' | 'error';
+  message: string;
+  error?: string;
 }
 
 const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) => {
   const theme = useTheme();
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
+  const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  // Form validation for email
+  const validateEmail = (email: string): boolean => {
+    const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    return re.test(email.toLowerCase());
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,21 +53,49 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
       setError('Email is required');
       return;
     }
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
     
     setLoading(true);
     setError('');
     
     try {
-      // In a real implementation, this would be an API call to your backend
-      // For MVP, we'll simulate a successful submission
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await fetch(`${API_URL}/waitlist/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          company: company.trim() || null,
+          feedback: feedback.trim() || null,
+        }),
+      });
+
+      const data: WaitlistResponse = await response.json();
       
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to join waiting list');
+      }
+
+      // Handle different response statuses
+      if (data.status === 'already_joined') {
+        setMessage(data.message);
+      } else {
+        setMessage('Thank you for joining our waiting list! We\'ll notify you when we\'re ready.');
+      }
+
       setSuccess(true);
+      
       // Reset form after successful submission
       setEmail('');
       setCompany('');
+      setFeedback('');
     } catch (err) {
-      setError('Failed to join waiting list. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to join waiting list. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -60,6 +105,7 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
     if (!loading) {
       setSuccess(false);
       setError('');
+      setMessage('');
       onClose();
     }
   };
@@ -101,10 +147,10 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
         {success ? (
           <Box sx={{ py: 3, textAlign: 'center' }}>
             <Alert severity="success" sx={{ mb: 2 }}>
-              You've been added to our waiting list!
+              {message}
             </Alert>
             <Typography variant="body1" sx={{ mb: 2 }}>
-              Thank you for your interest in CommitIQ. We'll notify you as soon as we're ready to onboard new users.
+              Thank you for your interest in CommitIQ. We're working hard to build a platform that revolutionizes technical recruiting.
             </Typography>
             <Typography variant="body2" color="textSecondary">
               In the meantime, feel free to try our GitHub profile analyzer to see what insights we can provide.
@@ -145,6 +191,21 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
               value={company}
               onChange={(e) => setCompany(e.target.value)}
               disabled={loading}
+              sx={{ mb: 2 }}
+            />
+
+            <TextField
+              margin="dense"
+              label="Feature Requests or Feedback (Optional)"
+              type="text"
+              fullWidth
+              multiline
+              rows={3}
+              variant="outlined"
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              disabled={loading}
+              placeholder="Let us know what features you'd like to see in CommitIQ"
               sx={{ mb: 1 }}
             />
             
