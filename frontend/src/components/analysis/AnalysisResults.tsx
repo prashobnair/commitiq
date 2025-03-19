@@ -218,25 +218,30 @@ const mapRepositories = (repoData: any[]): Repository[] => {
   return repoData.map((repo: any) => {
     console.log("Processing repository:", repo);
     
-    // Determine the URL to use
-    let repoUrl = '#';
-    if (repo.homepageUrl) {
-      repoUrl = repo.homepageUrl;
-    } else if (repo.name) {
+    // Use the URL if it exists, otherwise construct one from the name
+    let repoUrl = repo.url || '#';
+    if (!repoUrl && repo.name) {
       repoUrl = `https://github.com/${repo.name}`;
     }
     
+    // Format last_commit_date if it exists
+    let lastUpdated = 'N/A';
+    if (repo.last_commit_date && repo.last_commit_date !== 'N/A') {
+      lastUpdated = formatDate(repo.last_commit_date);
+    }
+    
+    // Map the repository data to our component format
     return {
       name: repo.name || 'Unknown Repository',
       url: repoUrl,
       stars: repo.stars || 0,
       forks: repo.forks || 0,
-      num_contributors: repo.collaborators || 0,
-      primary_language: repo.primary_language || 'N/A',
+      num_contributors: repo.collaborators || repo.num_contributors || 0,
+      primary_language: repo.primaryLanguage || repo.primary_language || 'N/A',
       commit_frequency: repo.commit_frequency || 'N/A',
-      last_updated: repo.last_commit_date ? formatDate(repo.last_commit_date) : 'N/A',
-      num_commits: repo.contribution_ratio ? (repo.contribution_ratio * 100).toFixed(1) + '%' : '0%',
-      impact_score: repo.repo_impact || 0
+      last_updated: lastUpdated,
+      num_commits: repo.contributionRatio ? `${repo.contributionRatio}%` : (repo.contribution_ratio ? `${(repo.contribution_ratio * 100).toFixed(1)}%` : '0%'),
+      impact_score: repo.impactScore || repo.repo_impact || 0
     };
   });
 };

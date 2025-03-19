@@ -217,7 +217,8 @@ def download_report(analysis_id):
             rightMargin=72,
             leftMargin=72,
             topMargin=72,
-            bottomMargin=72
+            bottomMargin=72,
+            title=f"CommitIQ GitHub Developer Impact Report - {username}"
         )
         
         # Get styles
@@ -361,7 +362,8 @@ def download_report(analysis_id):
                 repo_name = repo.get('name', 'Unknown')
                 repo_stars = repo.get('stars', 0)
                 repo_forks = repo.get('forks', 0)
-                repo_lang = repo.get('primary_language', 'N/A')
+                # Check both possible field names for language
+                repo_lang = repo.get('primaryLanguage') or repo.get('primary_language', 'N/A')
                 
                 repo_data.append([repo_name, str(repo_stars), str(repo_forks), repo_lang or 'N/A'])
             
