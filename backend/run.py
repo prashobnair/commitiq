@@ -1,21 +1,34 @@
 # backend/run.py
-from app import create_app  # Import from app, not app.api
+from app import create_app
 import os
-# import asyncio
-# from hypercorn.config import Config
-# from hypercorn.asyncio import serve
+import logging
+from dotenv import load_dotenv
 
-# Set development environment variables
-os.environ['FLASK_ENV'] = 'development'
-os.environ['DISABLE_CACHE'] = 'true'
+# Load environment variables
+load_dotenv()
 
+# Configure environment variables for development
+if not os.environ.get('FLASK_ENV'):
+    os.environ['FLASK_ENV'] = 'development'
+    
+# Create flask application
 app = create_app()
 
+# Setup logging for the main process
+logger = logging.getLogger(__name__)
+
 if __name__ == "__main__":
-    app.run(debug=True)  # Use port 5001 instead of default 5000
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5000))
     
-    # Comment out Hypercorn for now
-    # config = Config()
-    # config.bind = ["localhost:5001"]  # Changed port from 5000 to 5001
-    # config.use_reloader = True
-    # asyncio.run(serve(app, config))
+    # Log application startup
+    logger.info(f"Starting CommitIQ server on port {port}")
+    
+    # Run the application with optimized settings for development
+    app.run(
+        host='0.0.0.0',  # Listen on all interfaces
+        port=port,
+        debug=os.environ.get('FLASK_ENV') == 'development',
+        use_reloader=os.environ.get('FLASK_ENV') == 'development',
+        threaded=True  # Use threading for better concurrency
+    )

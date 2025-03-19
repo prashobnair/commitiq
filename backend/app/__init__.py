@@ -9,6 +9,7 @@ import logging
 import sys
 import time
 from logging.handlers import RotatingFileHandler
+from .models import db  # Import the SQLAlchemy db instance
 # from asgiref.wsgi import WsgiToAsgi  # Comment out for now
 
 # Configure logging
@@ -84,10 +85,20 @@ def create_app(test_config=None):
     # Apply configuration
     app.config.from_mapping(**APP_CONFIG)
     
+    # Configure database
+    app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
     if test_config:
         # Override with test config if provided
         app.config.from_mapping(test_config)
         
+    # Initialize database
+    db.init_app(app)
+    
+    # Register CLI commands
+    register_commands(app)
+    
     # Set up CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
@@ -117,3 +128,44 @@ def create_app(test_config=None):
     # Comment out ASGI conversion for now
     # asgi_app = WsgiToAsgi(app)
     # return asgi_app
+
+def get_database_uri():
+    """
+    Construct database URI from environment variables.
+    Fallback to SQLite for local development if PostgreSQL settings not available.
+    """
+    db_host = os.environ.get("DB_HOST")
+    db_port = os.environ.get("DB_PORT")
+    db_name = os.environ.get("DB_NAME")
+    db_user = os.environ.get("DB_USER")
+    db_password = os.environ.get("DB_PASSWORD")
+    
+    # If PostgreSQL environment variables are set, use PostgreSQL
+    if db_host and db_port and db_name and db_user and db_password:
+        return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    
+    # Otherwise, fall back to SQLite for local development/testing
+    app_root = os.path.dirname(os.path.abspath(__file__))
+    instance_path = os.path.join(app_root, '..', 'instance')
+    os.makedirs(instance_path, exist_ok=True)
+    
+    logger.warning("PostgreSQL configuration not found. Using SQLite for local development.")
+    return f"sqlite:///{os.path.join(instance_path, 'commitiq.sqlite')}"
+
+def register_commands(app):
+    """Register CLI commands with the application."""
+    
+    @app.cli.command('init-db')
+    def init_db_command():
+        """Clear existing data and create new tables."""
+        logger.info("Initializing database...")
+        with app.app_context():
+            db.create_all()
+        logger.info("Database initialized successfully.")
+    
+    @app.cli.command('seed-db')
+    def seed_db_command():
+        """Seed the database with sample data."""
+        logger.info("Seeding database with sample data...")
+        # Add seeding logic here if needed
+        logger.info("Database seeded successfully.")

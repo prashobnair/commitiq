@@ -1,0 +1,12 @@
+{
+  "name": "commitiq-backend-pdf",
+  "version": "1.0.0",
+  "description": "PDF generation service for CommitIQ",
+  "main": "pdf_generator.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "puppeteer": "^22.15.0"
+  }
+}

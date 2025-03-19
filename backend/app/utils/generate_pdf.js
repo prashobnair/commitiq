@@ -1,102 +1,161 @@
+/**
+ * Optimized PDF Generator for CommitIQ
+ * 
+ * This script generates a PDF from a URL (either a website or a local HTML file)
+ * with optimized handling of rendering and resources.
+ * 
+ * Usage:
+ *   node generate_pdf.js <url> <output_path>
+ * 
+ * Example:
+ *   node generate_pdf.js http://localhost:3000/print/username output.pdf
+ */
+
 const puppeteer = require('puppeteer');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
+const { performance } = require('perf_hooks');
+
+// Get command line arguments
+const url = process.argv[2];
+const outputPath = process.argv[3];
+
+// Validate arguments
+if (!url || !outputPath) {
+    console.error('Usage: node generate_pdf.js <url> <output_path>');
+    process.exit(1);
+}
+
+// Create output directory if it doesn't exist
+const outputDir = path.dirname(outputPath);
+if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+}
+
+// Extract username from URL for targeted debugging
+const urlObj = new URL(url);
+const pathname = urlObj.pathname;
+const username = pathname.split('/').pop();
+
+// Browser launch options
+const BROWSER_OPTIONS = {
+    headless: true,
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas', 
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--font-render-hinting=none',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins',
+        '--disable-site-isolation-trials'
+    ]
+};
+
+// Page settings
+const PAGE_SETTINGS = {
+    width: 816,     // Letter width at 96 DPI
+    height: 1056,   // Letter height at 96 DPI
+    deviceScaleFactor: 2,  // Higher resolution for better quality
+    waitTimeMs: 3000, // Wait time after page load
+    navigationTimeout: 60000 // 60 seconds timeout for navigation
+};
+
+// CSS to ensure all elements are visible in print
+const PRINT_CSS = `
+    @media print {
+        .print-section, .print-container, body, html {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            height: auto !important;
+            overflow: visible !important;
+            position: relative !important;
+            page-break-inside: avoid;
+        }
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .background-gradient, [class*='gradient'] {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+        }
+        
+        /* Ensure headings stay with their content */
+        h1, h2, h3, h4, h5, h6 {
+            page-break-after: avoid;
+            page-break-inside: avoid;
+        }
+        
+        /* Keep images on one page if possible */
+        img {
+            page-break-inside: avoid;
+            max-width: 100% !important;
+        }
+        
+        /* Ensure charts are fully visible */
+        canvas, svg, [id*="chart"], [id*="graph"] {
+            page-break-inside: avoid;
+            max-width: 100% !important;
+        }
+    }
+`;
 
 async function generatePDF() {
-    // Get command-line arguments
-    const args = process.argv.slice(2);
-    const url = args[0];
-    const outputPath = args[1];
+    const startTime = performance.now();
+    console.log(`Starting PDF generation for ${url}`);
+    console.log(`Output path: ${outputPath}`);
     
-    if (!url || !outputPath) {
-        console.error('URL and output path are required');
-        process.exit(1);
-    }
-
-    // Extract username from URL for targeted debugging
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    const username = pathname.split('/').pop();
-
-    // Check if this is a problematic user that needs special handling
-    const isProblematicUser = username === 'fketelaars';
-    const debugMode = isProblematicUser;
+    let browser = null;
     
     try {
-        console.log(`Generating PDF from URL: ${url}`);
-        console.log(`Output path: ${outputPath}`);
-        if (isProblematicUser) {
-            console.log(`Detected problematic user: ${username}, enabling enhanced rendering`);
-        }
+        // Launch browser
+        console.log('Launching browser...');
+        browser = await puppeteer.launch(BROWSER_OPTIONS);
         
-        // Launch browser with improved settings
-        const browser = await puppeteer.launch({
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--font-render-hinting=none',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins',
-                '--disable-site-isolation-trials'
-            ],
-            headless: 'new' // Use new headless mode
-        });
-        
+        // Create a new page
         const page = await browser.newPage();
         
-        // Set up console log handling for debugging
-        if (debugMode) {
-            page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-            page.on('pageerror', error => console.log('PAGE ERROR:', error.message));
-        }
+        // Set up logging if needed
+        page.on('console', msg => console.log(`PAGE LOG: ${msg.text()}`));
+        page.on('pageerror', error => console.log(`PAGE ERROR: ${error.message}`));
         
-        // Set viewport size to match letter size paper in pixels (at 96 DPI)
+        // Set viewport size
         await page.setViewport({
-            width: 816,
-            height: 1056,
-            deviceScaleFactor: 2 // Higher resolution
+            width: PAGE_SETTINGS.width,
+            height: PAGE_SETTINGS.height,
+            deviceScaleFactor: PAGE_SETTINGS.deviceScaleFactor
         });
         
-        // Navigate to the URL
-        await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+        // Navigate to the page
+        console.log(`Navigating to ${url}...`);
+        await page.goto(url, { 
+            waitUntil: 'networkidle0',
+            timeout: PAGE_SETTINGS.navigationTimeout
+        });
         
         // Add CSS to ensure all sections are visible in print
-        await page.addStyleTag({
-            content: `
-                @media print {
-                    .print-section, .print-container, body, html {
-                        display: block !important;
-                        visibility: visible !important;
-                        opacity: 1 !important;
-                        height: auto !important;
-                        overflow: visible !important;
-                        position: relative !important;
-                        page-break-inside: avoid;
-                    }
-                    * {
-                        -webkit-print-color-adjust: exact !important;
-                        print-color-adjust: exact !important;
-                    }
-                    .background-gradient, [class*='gradient'] {
-                        -webkit-print-color-adjust: exact !important;
-                        print-color-adjust: exact !important;
-                        color-adjust: exact !important;
-                    }
-                }
-            `
-        });
+        await page.addStyleTag({ content: PRINT_CSS });
         
-        // Wait for React to hydrate and render
+        // Wait for any client-side rendering to complete
         console.log('Waiting for rendering to complete...');
-        await page.waitForFunction(
-            'typeof window.__NEXT_HYDRATED__ !== "undefined" || document.readyState === "complete"', 
-            { timeout: 10000 }
-        ).catch(e => console.log('No hydration flag found, proceeding anyway'));
+        await Promise.race([
+            page.waitForFunction(
+                'typeof window.__NEXT_HYDRATED__ !== "undefined" || document.readyState === "complete"', 
+                { timeout: 10000 }
+            ).catch(() => console.log('No hydration flag found, proceeding anyway')),
+            new Promise(resolve => setTimeout(resolve, PAGE_SETTINGS.waitTimeMs))
+        ]);
         
-        // Wait a bit more to ensure everything is rendered
-        await page.waitForTimeout(3000);
+        // Additional wait to ensure everything is rendered
+        await page.waitForTimeout(PAGE_SETTINGS.waitTimeMs);
         
-        // Inject JavaScript to ensure all elements are visible
+        // Execute JavaScript to ensure all elements are visible
         await page.evaluate(() => {
             try {
                 // Force visibility on all elements
@@ -127,89 +186,85 @@ async function generatePDF() {
                 elementsWithBackground.forEach(el => {
                     if (el) {
                         el.setAttribute('data-print-background', 'true');
-                        const computedStyle = window.getComputedStyle(el);
-                        const backgroundColor = computedStyle.backgroundColor;
-                        const backgroundImage = computedStyle.backgroundImage;
-                        
-                        if (backgroundColor !== 'rgba(0, 0, 0, 0)' && backgroundColor !== 'transparent') {
-                            el.style.backgroundColor = backgroundColor;
-                        }
-                        
-                        if (backgroundImage !== 'none') {
-                            el.style.backgroundImage = backgroundImage;
-                            el.style.webkitPrintColorAdjust = 'exact';
-                            el.style.printColorAdjust = 'exact';
-                        }
                     }
                 });
                 
-                // Wait for potential repaints to complete
-                return "Visibility enforced for all sections";
+                // Ensure all charts and graphs are visible
+                const charts = document.querySelectorAll('canvas, svg, [id*="chart"], [id*="graph"]');
+                charts.forEach(chart => {
+                    if (chart) {
+                        chart.style.display = 'block';
+                        chart.style.visibility = 'visible';
+                        chart.style.opacity = '1';
+                        chart.style.maxWidth = '100%';
+                    }
+                });
+                
+                // Return rendering statistics for debugging
+                return {
+                    elements: document.querySelectorAll('*').length,
+                    images: images.length,
+                    charts: charts.length
+                };
             } catch (error) {
-                console.error('Error in visibility script:', error);
-                return "Error: " + error.message;
+                console.error('Error preparing page for PDF:', error);
+                return { error: error.message };
             }
-        }).then(result => console.log('Visibility script result:', result));
-        
-        // Take a screenshot for debugging if needed
-        if (debugMode) {
-            const screenshotPath = `${path.dirname(outputPath)}/${username}_debug_screenshot.png`;
-            await page.screenshot({ path: screenshotPath, fullPage: true });
-            console.log(`Debug screenshot saved to: ${screenshotPath}`);
-        }
-        
-        // Calculate the full height of the page
-        const bodyHeight = await page.evaluate(() => {
-            return Math.max(
-                document.body.scrollHeight,
-                document.body.offsetHeight,
-                document.documentElement.clientHeight,
-                document.documentElement.scrollHeight,
-                document.documentElement.offsetHeight
-            );
         });
         
-        // Adjust viewport if needed
-        if (bodyHeight > 1056) {
-            await page.setViewport({
-                width: 816,
-                height: bodyHeight,
-                deviceScaleFactor: 2
-            });
-            console.log(`Adjusted viewport height to: ${bodyHeight}px`);
-        }
-        
         // Generate PDF
+        console.log('Generating PDF...');
         await page.pdf({
             path: outputPath,
             format: 'Letter',
             printBackground: true,
-            preferCSSPageSize: false,
             margin: {
-                top: '0.4in',
-                right: '0.4in',
-                bottom: '0.4in',
-                left: '0.4in'
+                top: '0.5in',
+                right: '0.5in',
+                bottom: '0.5in',
+                left: '0.5in'
             },
-            height: bodyHeight > 1056 ? `${bodyHeight}px` : undefined
+            displayHeaderFooter: true,
+            headerTemplate: '<div></div>', // Empty header
+            footerTemplate: `
+                <div style="width: 100%; font-size: 8px; padding: 0 0.5in; display: flex; justify-content: space-between;">
+                    <div>CommitIQ Analysis: ${username}</div>
+                    <div>Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>
+                </div>
+            `,
+            timeout: 60000 // 60 seconds timeout for PDF generation
         });
         
-        // Check if the PDF was created and has content
-        const stats = fs.statSync(outputPath);
-        if (stats.size < 1000) {
-            console.warn(`Warning: PDF file size is suspiciously small (${stats.size} bytes)`);
+        // Verify the PDF was created
+        if (fs.existsSync(outputPath)) {
+            const stats = fs.statSync(outputPath);
+            const endTime = performance.now();
+            console.log(`PDF generated successfully at ${outputPath}`);
+            console.log(`File size: ${(stats.size / 1024).toFixed(2)} KB`);
+            console.log(`Generation time: ${((endTime - startTime) / 1000).toFixed(2)} seconds`);
+            
+            await browser.close();
+            process.exit(0);
         } else {
-            console.log(`PDF generated successfully! Size: ${stats.size} bytes`);
+            console.error(`PDF file was not created at ${outputPath}`);
+            await browser.close();
+            process.exit(1);
         }
         
-        await browser.close();
-        console.log(`File saved to: ${outputPath}`);
-        process.exit(0);
     } catch (error) {
-        console.error('Error generating PDF:', error);
+        console.error(`Error generating PDF: ${error.message}`);
+        if (error.stack) {
+            console.error(error.stack);
+        }
+        
+        if (browser) {
+            await browser.close();
+        }
+        
         process.exit(1);
     }
 }
 
+// Execute the PDF generation
 generatePDF();
                 
