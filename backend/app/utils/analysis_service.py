@@ -60,6 +60,80 @@ REVIEW_ACTIVITY = {
 # Contribution ratio exponent (diminishing returns for higher contribution percentages)
 CONTRIBUTION_RATIO_EXPONENT = 1.0
 
+# Languages to exclude from top languages calculation
+LANGUAGE_BLACKLIST = {
+    # Markup Languages
+    'HTML',
+    'XML',
+    'Markdown',
+    'TeX',
+    'Roff',
+    'Adblock Filter List',
+    'Rich Text Format',
+    
+    # Stylesheet Languages
+    'CSS',
+    'SCSS',
+    'Less',
+    
+    # Data Formats / Configuration
+    'JSON',
+    'YAML',
+    'INI',
+    'Properties',
+    'EditorConfig',
+    'TOML',
+    'CSV',
+    'TSV',
+    
+    # Shell Scripting
+    'Shell',
+    'PowerShell',
+    'Batchfile',
+    
+    # Build/Deployment/Infrastructure
+    'Dockerfile',
+    'Makefile',
+    'CMake',
+    'HCL',
+    'Nix',
+    'ApacheConf',
+    'QML',
+    'XSLT',
+    
+    # Editor/IDE Specific
+    'Vim Script',
+    'VimL',
+    'Emacs Lisp',
+    
+    # Specialized/Less Common
+    'Prolog',
+    'Mathematica',
+    'AutoHotkey',
+    'SourcePawn',
+    'Web Ontology Language',
+    'SQF',
+    'IDL',
+    'PostScript',
+    'M4',
+    'Coq',
+    'Standard ML',
+    'Gherkin',
+    'AutoIt',
+    'TSQL',
+    'PLSQL',
+    'OpenSCAD',
+    'BlitzBasic',
+    'xBase',
+    'FreeMarker',
+    'WebAssembly',
+    'Groff',
+    'Xtend',
+    'Max',
+    'Logos',
+    'Modelica'
+}
+
 
 class AnalysisService:
     """
@@ -303,6 +377,10 @@ class AnalysisService:
                 for lang in langs:
                     lang_name = lang.get('node', {}).get('name')
                     if lang_name:
+                        # Skip blacklisted languages
+                        if lang_name in LANGUAGE_BLACKLIST:
+                            continue
+                            
                         lang_size = lang.get('size', 0)
                         lang_ratio = lang_size / total_size if total_size > 0 else 0
                         weighted_contribution = lang_ratio * contribution_ratio * repo_impact
@@ -337,11 +415,15 @@ class AnalysisService:
             )[:5]  # Limit to top 5
             
             # Calculate top languages (normalized)
+            # Filter out blacklisted languages
+            filtered_languages = {lang: weight for lang, weight in language_usage.items() if lang not in LANGUAGE_BLACKLIST}
+            
+            # Sort and limit to top 4 languages
             top_languages = sorted(
-                [{'name': lang, 'weight': weight} for lang, weight in language_usage.items()],
+                [{'name': lang, 'weight': weight} for lang, weight in filtered_languages.items()],
                 key=lambda x: x['weight'],
                 reverse=True
-            )[:5]  # Limit to top 5
+            )[:4]  # Limit to top 4
             
             # Normalize language weights to percentages
             total_weight = sum(lang['weight'] for lang in top_languages)
