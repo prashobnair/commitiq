@@ -444,7 +444,12 @@ const PrintPage: React.FC = () => {
               {/* Top Repositories */}
               {top_repositories && top_repositories.length > 0 && (
                 <Box className="print-section" data-testid="repositories-section">
-                  <TopRepositories repositories={top_repositories} />
+                  <TopRepositories repositories={top_repositories.map((repo: any) => ({
+                    name: repo.name,
+                    stars: repo.stars,
+                    forks: repo.forks,
+                    primary_language: repo.primaryLanguage || repo.primary_language || 'N/A'
+                  }))} />
                 </Box>
               )}
               

@@ -272,48 +272,16 @@ class AnalysisService:
             # Calculate consistency score
             contribution_days = []
             weeks = user_data.get('contributionsCollection', {}).get('contributionCalendar', {}).get('weeks', [])
-            for week in weeks:
-                for day in week.get('contributionDays', []):
-                    contribution_days.append(day.get('contributionCount', 0))
             
-            # Convert to numpy array for calculations
-            contribution_days_array = np.array(contribution_days)
-            active_days = np.sum(contribution_days_array > 0)
-            total_days = len(contribution_days)
+            # Calculate active weeks (weeks with at least one contribution)
+            active_weeks = sum(1 for week in weeks if any(
+                day.get('contributionCount', 0) > 0 
+                for day in week.get('contributionDays', [])
+            ))
+            total_weeks = len(weeks)
             
-            # Calculate activity consistency (days active / total days)
-            activity_ratio = active_days / total_days if total_days > 0 else 0
-            
-            # Calculate variance in contribution amounts (lower is more consistent)
-            nonzero_contribs = contribution_days_array[contribution_days_array > 0]
-            contrib_variance = np.var(nonzero_contribs) / (np.mean(nonzero_contribs) + 0.01) if len(nonzero_contribs) > 0 else 0
-            contrib_variance_factor = max(0, 1 - min(contrib_variance / 10, 1))  # Normalize and invert
-            
-            # Calculate streaks (consecutive days with contributions)
-            streaks = []
-            current_streak = 0
-            
-            for contribs in contribution_days:
-                if contribs > 0:
-                    current_streak += 1
-                else:
-                    if current_streak > 0:
-                        streaks.append(current_streak)
-                    current_streak = 0
-            
-            if current_streak > 0:
-                streaks.append(current_streak)
-            
-            max_streak = max(streaks) if streaks else 0
-            avg_streak = np.mean(streaks) if streaks else 0
-            
-            # Calculate weighted consistency score
-            consistency_score = (
-                0.4 * activity_ratio +
-                0.3 * min(max_streak / 14, 1) +  # Cap max streak factor at 14 days
-                0.2 * min(avg_streak / 5, 1) +   # Cap avg streak factor at 5 days
-                0.1 * contrib_variance_factor
-            )
+            # Original consistency score calculation: active_weeks / total_weeks
+            consistency_score = active_weeks / total_weeks if total_weeks > 0 else 0
             
             result['contributions']['consistency'] = consistency_score
             
@@ -348,27 +316,61 @@ class AnalysisService:
                 
                 contribution_ratio = developer_commits / total_commits if total_commits > 0 else 0
                 
-                # Calculate PR acceptance rate
-                merged_prs = repo.get('mergedPullRequests', {}).get('totalCount', 0)
-                closed_prs = repo.get('closedPullRequests', {}).get('totalCount', 0)
-                pr_acceptance = merged_prs / (merged_prs + closed_prs) if (merged_prs + closed_prs) > 0 else 0
+                # Pull Request stats
+                merged_pull_requests = repo.get('mergedPullRequests', {}).get('totalCount', 0)
+                closed_pull_requests = repo.get('closedPullRequests', {}).get('totalCount', 0)
+                total_pull_requests = merged_pull_requests + closed_pull_requests
+                pr_acceptance = merged_pull_requests / total_pull_requests if total_pull_requests > 0 else 0.5
+                
+                # Review stats
+                pull_request_nodes = repo.get('pullRequests', {}).get('nodes', [])
+                review_comments = sum(
+                    pr.get('reviews', {}).get('totalCount', 0) + pr.get('comments', {}).get('totalCount', 0)
+                    for pr in pull_request_nodes
+                )
                 
                 # Calculate technical impact
-                technical_impact = (
+                code_quality = (
                     TECHNICAL_IMPACT_WEIGHTS['pr_acceptance'] * pr_acceptance +
-                    TECHNICAL_IMPACT_WEIGHTS['review_activity'] * collab_factor
-                ) * math.log1p(stars + 1) * 0.01
+                    TECHNICAL_IMPACT_WEIGHTS['review_activity'] * min(review_comments / REVIEW_ACTIVITY['normalization_factor'], 1.0) 
+                )
+                repo_tech_impact = (contribution_ratio ** CONTRIBUTION_RATIO_EXPONENT) * collab_factor * code_quality
                 
                 # Calculate ecosystem impact
-                ecosystem_impact = math.log1p(forks + 1) * contribution_ratio ** CONTRIBUTION_RATIO_EXPONENT * 0.005
+                popularity = (stars + 0.1 * forks) ** 0.5
+                repo_eco_impact = popularity * contribution_ratio
                 
-                # Calculate weighted repository impact
+                # Calculate final repository impact
                 repo_impact = (
-                    REPO_IMPACT_WEIGHTS['technical'] * technical_impact +
-                    REPO_IMPACT_WEIGHTS['ecosystem'] * ecosystem_impact
+                    REPO_IMPACT_WEIGHTS['technical'] * repo_tech_impact +
+                    REPO_IMPACT_WEIGHTS['ecosystem'] * repo_eco_impact
                 )
                 
                 repo_impacts.append(repo_impact)
+                
+                # Store repository sub-metrics for debugging and reference
+                repo_metrics = {
+                    'name': repo.get('name'),
+                    'stars': stars,
+                    'forks': forks,
+                    'collaborators': collaborators,
+                    'collab_factor': collab_factor,
+                    'developer_commits': developer_commits,
+                    'total_commits': total_commits,
+                    'contribution_ratio': contribution_ratio,
+                    'merged_pull_requests': merged_pull_requests,
+                    'closed_pull_requests': closed_pull_requests,
+                    'total_pull_requests': total_pull_requests,
+                    'pr_acceptance': pr_acceptance,
+                    'review_comments': review_comments,
+                    'code_quality': code_quality,
+                    'repo_tech_impact': repo_tech_impact,
+                    'popularity': popularity,
+                    'repo_eco_impact': repo_eco_impact,
+                    'repo_impact': repo_impact
+                }
+                
+                temp_metrics['repositories'].append(repo_metrics)
                 
                 # Track repository languages
                 langs = repo.get('languages', {}).get('edges', [])
@@ -389,30 +391,59 @@ class AnalysisService:
                             language_usage[lang_name] += weighted_contribution
                         else:
                             language_usage[lang_name] = weighted_contribution
+            
+            # Sort repositories by repo_impact in descending order
+            sorted_repos = sorted(temp_metrics['repositories'], key=lambda x: x['repo_impact'], reverse=True)
+            # Take top 4 (or fewer if less than 4 exist)
+            top_repos = sorted_repos[:4]
+            
+            # Format repositories for the response
+            result['contributions']['top_repositories'] = []
+            for repo in top_repos:
+                # Find the original repository data to get primary language
+                original_repo = next((r for r in repos if r.get('name') == repo['name']), {})
                 
-                # Add to top repositories if it has impact
-                if repo_impact > 0:
-                    # Handle case where primaryLanguage is None
-                    primary_language_name = 'Unknown'
-                    if repo.get('primaryLanguage') is not None:
-                        primary_language_name = repo.get('primaryLanguage', {}).get('name', 'Unknown')
-                    
-                    result['contributions']['top_repositories'].append({
-                        'name': repo.get('name', ''),
-                        'url': f"https://github.com/{username}/{repo.get('name', '')}",
-                        'stars': stars,
-                        'forks': forks,
-                        'primaryLanguage': primary_language_name,
-                        'contributionRatio': round(contribution_ratio * 100),
-                        'impactScore': round(repo_impact * 5000)  # Scale for readability
-                    })
+                # Get primary language
+                primary_language_name = 'N/A'
+                primary_language = original_repo.get('primaryLanguage', {})
+                if primary_language and primary_language is not None:
+                    primary_language_name = primary_language.get('name', 'N/A')
+                
+                # Format the contribution ratio as a percentage (0-100%)
+                contribution_ratio_pct = round(repo['contribution_ratio'] * 100, 1)
+                
+                # Set the impact score without scaling - use the raw value
+                impact_score = repo['repo_impact']
+                
+                # Get last commit date if available
+                last_commit_date = 'N/A'
+                if original_repo.get('defaultBranchRef') is not None:
+                    target = original_repo.get('defaultBranchRef', {}).get('target', {})
+                    if 'lastCommit' in target and 'nodes' in target['lastCommit'] and len(target['lastCommit']['nodes']) > 0:
+                        last_commit_date = target['lastCommit']['nodes'][0].get('committedDate', 'N/A')
+                
+                # Get collaborators count
+                collaborators = original_repo.get('collaborators', {}).get('totalCount', 0) if original_repo.get('collaborators') is not None else 0
+                
+                result['contributions']['top_repositories'].append({
+                    'name': repo['name'],
+                    'url': f"https://github.com/{username}/{repo['name']}",
+                    'stars': repo['stars'],
+                    'forks': repo['forks'],
+                    'primaryLanguage': primary_language_name,
+                    'contributionRatio': contribution_ratio_pct,
+                    'impactScore': impact_score,  # Use raw value as in the original
+                    'last_commit_date': last_commit_date,
+                    'collaborators': collaborators,
+                    'commit_frequency': f"{repo['developer_commits']} / {repo['total_commits']}"
+                })
             
             # Sort and limit top repositories
             result['contributions']['top_repositories'] = sorted(
                 result['contributions']['top_repositories'],
                 key=lambda x: x['impactScore'],
                 reverse=True
-            )[:5]  # Limit to top 5
+            )
             
             # Calculate top languages (normalized)
             # Filter out blacklisted languages
@@ -431,6 +462,9 @@ class AnalysisService:
                 for lang in top_languages:
                     lang['weight'] = round(lang['weight'] / total_weight * 100)
             
+            # Filter out languages with 0% usage
+            top_languages = [lang for lang in top_languages if lang['weight'] > 0]
+            
             # Add top languages to contributions - convert to format expected by frontend
             result['contributions']['top_languages'] = [
                 {'language': lang['name'], 'percentage': lang['weight']} 
@@ -440,6 +474,61 @@ class AnalysisService:
             # Calculate overall repository impact
             result['contributions']['repos_impact'] = np.mean(repo_impacts) if repo_impacts else 0
             
+            # Calculate the overall impact score as per original implementation
+            # Only calculate if we have all necessary data
+            if (all(key in result['contributions'] for key in ['pulls', 'commits', 'consistency', 'repos_impact'])):
+                # Get individual component scores
+                pulls_score = AnalysisService.percentile_normalize(
+                    result['contributions']['pulls'],
+                    *NORMALIZATION_THRESHOLDS['pulls']
+                )
+                commits_score = AnalysisService.percentile_normalize(
+                    result['contributions']['commits'],
+                    *NORMALIZATION_THRESHOLDS['commits']
+                )
+                reviews_score = AnalysisService.percentile_normalize(
+                    result['contributions']['reviews'],
+                    *NORMALIZATION_THRESHOLDS['reviews']
+                )
+                issues_score = AnalysisService.percentile_normalize(
+                    result['contributions']['issues'],
+                    *NORMALIZATION_THRESHOLDS['issues']
+                )
+                repos_impact_score = AnalysisService.percentile_normalize(
+                    result['contributions']['repos_impact'],
+                    *NORMALIZATION_THRESHOLDS['repos_impact']
+                )
+                # Consistency is treated differently - multiply by 100 directly
+                consistency_score = result['contributions']['consistency'] * 100
+                
+                # Apply weights
+                weights = {
+                    'pulls': 0.35,
+                    'commits': 0.30,
+                    'reviews': 0.10,
+                    'issues': 0.10,
+                    'repos_impact': 0.10,
+                    'consistency': 0.05
+                }
+                
+                # Calculate the weighted average
+                impact_score = (
+                    weights['pulls'] * pulls_score +
+                    weights['commits'] * commits_score +
+                    weights['reviews'] * reviews_score +
+                    weights['issues'] * issues_score +
+                    weights['repos_impact'] * repos_impact_score +
+                    weights['consistency'] * consistency_score
+                )
+                
+                # Apply min/max bounds as in original implementation
+                impact_score = min(max(impact_score, 0), 100)
+                
+                # Set the impact score in the result - don't round to get exact values
+                result['impact_score'] = impact_score
+            else:
+                result['impact_score'] = 0
+                
             return result
             
         except Exception as e:
@@ -449,7 +538,7 @@ class AnalysisService:
     @staticmethod
     def calculate_impact_score(data):
         """
-        Calculate final impact score using percentile-based normalization.
+        Get the impact score that was calculated during data aggregation.
         
         Args:
             data (dict): Aggregated GitHub metrics
@@ -460,61 +549,13 @@ class AnalysisService:
         if not data or 'error' in data:
             return 0
             
-        try:
-            contributions = data.get('contributions', {})
-            
-            # Normalize metrics
-            pulls = AnalysisService.percentile_normalize(
-                contributions.get('pulls', 0),
-                *NORMALIZATION_THRESHOLDS['pulls']
-            )
-            commits = AnalysisService.percentile_normalize(
-                contributions.get('commits', 0),
-                *NORMALIZATION_THRESHOLDS['commits']
-            )
-            reviews = AnalysisService.percentile_normalize(
-                contributions.get('reviews', 0),
-                *NORMALIZATION_THRESHOLDS['reviews']
-            )
-            issues = AnalysisService.percentile_normalize(
-                contributions.get('issues', 0),
-                *NORMALIZATION_THRESHOLDS['issues']
-            )
-            repos_impact = AnalysisService.percentile_normalize(
-                contributions.get('repos_impact', 0),
-                *NORMALIZATION_THRESHOLDS['repos_impact']
-            )
-            consistency = AnalysisService.percentile_normalize(
-                contributions.get('consistency', 0),
-                *NORMALIZATION_THRESHOLDS['consistency']
-            )
-            
-            # Calculate weighted score
-            impact_score = (
-                IMPACT_SCORE_WEIGHTS['pulls'] * pulls +
-                IMPACT_SCORE_WEIGHTS['commits'] * commits +
-                IMPACT_SCORE_WEIGHTS['reviews'] * reviews +
-                IMPACT_SCORE_WEIGHTS['issues'] * issues +
-                IMPACT_SCORE_WEIGHTS['repos_impact'] * repos_impact +
-                IMPACT_SCORE_WEIGHTS['consistency'] * consistency
-            )
-            
-            # Add the scores to the data for transparency
-            data['scores'] = {
-                'pulls': round(pulls),
-                'commits': round(commits),
-                'reviews': round(reviews),
-                'issues': round(issues),
-                'repos_impact': round(repos_impact),
-                'consistency': round(consistency),
-                'impact_score': round(impact_score)
-            }
-            
-            return round(impact_score)
-            
-        except Exception as e:
-            logger.exception(f"Error calculating impact score: {str(e)}")
-            return 0
+        # If the impact score is already calculated in aggregate_user_data,
+        # simply return it
+        if 'impact_score' in data:
+            return data['impact_score']
+        
+        # If not, return a default of 0
+        return 0
 
 # Create a singleton instance
 analysis_service = AnalysisService() 
