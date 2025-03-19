@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Card,
@@ -15,6 +15,9 @@ import {
   Button,
   Paper,
   Stack,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
 import {
   Code,
@@ -31,7 +34,8 @@ import {
   Star,
   BarChart,
   Code as CodeIcon,
-  ArrowBack
+  ArrowBack,
+  ExpandMore,
 } from '@mui/icons-material';
 import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../types/analysis';
 import ShareOptions from './ShareOptions';
@@ -141,7 +145,7 @@ const getOverallRating = (score: number): string => {
 };
 
 // Helper function to identify strengths and considerations
-const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: string[], considerations: string[] } => {
+const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: string[]; considerations: string[] } => {
   // Extract contribution data from the correct location in the response
   const contributions = data.analysis.contributions || emptyContributions;
   const pulls = contributions.pulls;
@@ -249,6 +253,9 @@ const mapRepositories = (repoData: any[]): Repository[] => {
 const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
   const theme = useTheme();
   const { resetAnalysis } = useAnalysisContext();
+  // Single state to track expanded accordion
+  const [expandedAdvancedMetrics, setExpandedAdvancedMetrics] = useState<boolean>(false);
+  
   console.log("Full analysis data:", JSON.stringify(data, null, 2));
 
   // Ensure we have valid data
@@ -620,184 +627,209 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
           </Box>
         </Grid>
 
-        {/* Metrics */}
+        {/* Deep Insights Accordion */}
         <Grid item xs={12}>
-          <Typography variant="h5" gutterBottom sx={{ mt: 2, mb: 3, fontWeight: 600 }}>
-            Key Metrics
-          </Typography>
-          <Grid container spacing={3}>
-            {metrics.map((metric, index) => (
-              <Grid item xs={12} sm={6} md={4} key={index}>
-                <Card sx={{ borderRadius: 3 }}>
-                  <CardContent>
-                    <Box
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        mb: 2,
-                      }}
-                    >
-                      <Avatar
-                        sx={{
-                          bgcolor: metric.color ? `${getColorFromTheme(theme, metric.color)}15` : theme.palette.primary.light,
-                          color: metric.color ? getColorFromTheme(theme, metric.color) : theme.palette.primary.main,
-                          mr: 2,
-                        }}
-                      >
-                        <metric.icon />
-                      </Avatar>
-                      <Box>
-                        <Typography color="textSecondary" variant="overline">
-                          {metric.title}
-                        </Typography>
-                        <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-                          {metric.displayValue !== undefined ? metric.displayValue : metric.value}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography color="textSecondary" variant="body2">
-                        {metric.description}
-                      </Typography>
-                      <Chip 
-                        label={getRating(
-                          typeof metric.value === 'string' 
-                            ? parseFloat(metric.value) / 100 
-                            : metric.title.toLowerCase().includes('impact')
-                              ? Number(metric.value) // Don't modify impact value
-                              : Number(metric.value), 
-                          metric.title.toLowerCase().includes('pull') ? 'prs' : 
-                          metric.title.toLowerCase().includes('issue') ? 'issues' :
-                          metric.title.toLowerCase().includes('review') ? 'reviews' :
-                          metric.title.toLowerCase().includes('commit') ? 'commits' :
-                          metric.title.toLowerCase().includes('consist') ? 'consistency' :
-                          'impact'
-                        ).label} 
-                        size="small"
-                        sx={{ 
-                          bgcolor: metric.color ? `${getColorFromTheme(theme, metric.color)}15` : theme.palette.primary.light,
-                          color: metric.color ? getColorFromTheme(theme, metric.color) : theme.palette.primary.main,
-                        }}
-                      />
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
-        </Grid>
-
-        {/* Repositories */}
-        {repositories && repositories.length > 0 ? (
-          <Grid item xs={12}>
-            <Typography variant="h5" gutterBottom sx={{ mt: 4, mb: 3, fontWeight: 600 }}>
-              Top Repository Contributions
-            </Typography>
-            <Grid container spacing={3}>
-              {repositories
-                .sort((a, b) => (b.impact_score || 0) - (a.impact_score || 0))
-                .slice(0, 4)
-                .map((repo, index) => (
-                  <Grid item xs={12} md={6} key={index}>
+          <Accordion 
+            expanded={expandedAdvancedMetrics} 
+            onChange={() => setExpandedAdvancedMetrics(!expandedAdvancedMetrics)}
+            sx={{ mt: 4, mb: 3, borderRadius: 2, overflow: 'hidden' }}
+          >
+            <AccordionSummary
+              expandIcon={<ExpandMore />}
+              aria-controls="deep-insights-content"
+              id="deep-insights-header"
+              sx={{ 
+                background: `linear-gradient(90deg, ${theme.palette.primary.main}10, ${theme.palette.secondary.main}10)`,
+                borderRadius: 1
+              }}
+            >
+              <Typography variant="subtitle1" fontWeight="medium" color="text.primary" sx={{ display: 'flex', alignItems: 'center' }}>
+                <BarChart sx={{ mr: 1, color: theme.palette.primary.main }} />
+                {expandedAdvancedMetrics ? 'Hide Deep Insights' : 'Show Deep Insights'}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ p: 3 }}>
+              {/* Detailed Key Metrics Section */}
+              <Typography variant="h6" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>
+                Key Metrics
+              </Typography>
+              <Grid container spacing={3} sx={{ mb: 4 }}>
+                {metrics.map((metric, index) => (
+                  <Grid item xs={12} sm={6} md={4} key={index}>
                     <Card sx={{ borderRadius: 3 }}>
-                      <CardContent sx={{ p: 3 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                            <Link
-                              href={repo.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              sx={{ textDecoration: 'none' }}
-                            >
-                              {repo.name}
-                            </Link>
+                      <CardContent>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            mb: 2,
+                          }}
+                        >
+                          <Avatar
+                            sx={{
+                              bgcolor: metric.color ? `${getColorFromTheme(theme, metric.color)}15` : theme.palette.primary.light,
+                              color: metric.color ? getColorFromTheme(theme, metric.color) : theme.palette.primary.main,
+                              mr: 2,
+                            }}
+                          >
+                            <metric.icon />
+                          </Avatar>
+                          <Box>
+                            <Typography color="textSecondary" variant="overline">
+                              {metric.title}
+                            </Typography>
+                            <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                              {metric.displayValue !== undefined ? metric.displayValue : metric.value}
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography color="textSecondary" variant="body2">
+                            {metric.description}
                           </Typography>
                           <Chip 
-                            label={`Impact: ${(repo.impact_score || 0).toFixed(2)}`}
-                            color="primary"
+                            label={getRating(
+                              typeof metric.value === 'string' 
+                                ? parseFloat(metric.value) / 100 
+                                : metric.title.toLowerCase().includes('impact')
+                                  ? Number(metric.value) // Don't modify impact value
+                                  : Number(metric.value), 
+                              metric.title.toLowerCase().includes('pull') ? 'prs' : 
+                              metric.title.toLowerCase().includes('issue') ? 'issues' :
+                              metric.title.toLowerCase().includes('review') ? 'reviews' :
+                              metric.title.toLowerCase().includes('commit') ? 'commits' :
+                              metric.title.toLowerCase().includes('consist') ? 'consistency' :
+                              'impact'
+                            ).label} 
                             size="small"
+                            sx={{ 
+                              bgcolor: metric.color ? `${getColorFromTheme(theme, metric.color)}15` : theme.palette.primary.light,
+                              color: metric.color ? getColorFromTheme(theme, metric.color) : theme.palette.primary.main,
+                            }}
                           />
-                        </Box>
-                        
-                        <Grid container spacing={2}>
-                          <Grid item xs={6} sm={3}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <Star sx={{ color: 'warning.main', mb: 1 }} />
-                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.stars || 0}
-                              </Typography>
-                              <Typography variant="body2" color="textSecondary">
-                                Stars
-                              </Typography>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={6} sm={3}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <MergeType sx={{ color: 'primary.main', mb: 1 }} />
-                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.forks || 0}
-                              </Typography>
-                              <Typography variant="body2" color="textSecondary">
-                                Forks
-                              </Typography>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={6} sm={3}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <Person sx={{ color: 'info.main', mb: 1 }} />
-                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.num_contributors || 0}
-                              </Typography>
-                              <Typography variant="body2" color="textSecondary">
-                                Collaborators
-                              </Typography>
-                            </Box>
-                          </Grid>
-                          <Grid item xs={6} sm={3}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                              <Commit sx={{ color: 'success.main', mb: 1 }} />
-                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {repo.num_commits || '0%'}
-                              </Typography>
-                              <Typography variant="body2" color="textSecondary">
-                                Contributions
-                              </Typography>
-                            </Box>
-                          </Grid>
-                        </Grid>
-                        
-                        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Chip
-                            label={`Language: ${repo.primary_language || 'N/A'}`}
-                            color="secondary"
-                            size="small"
-                            sx={{ mr: 1 }}
-                          />
-                          <Typography variant="body2" color="textSecondary">
-                            Last updated: {repo.last_updated || 'N/A'}
-                          </Typography>
                         </Box>
                       </CardContent>
                     </Card>
                   </Grid>
                 ))}
-            </Grid>
-          </Grid>
-        ) : (
-          <Grid item xs={12}>
-            <Card sx={{ borderRadius: 3, p: 3, mt: 4 }}>
-              <Box sx={{ textAlign: 'center', py: 3 }}>
-                <GitHub sx={{ fontSize: 60, color: 'text.secondary', opacity: 0.5, mb: 2 }} />
-                <Typography variant="h6" color="textSecondary">
-                  No repository contributions data available
-                </Typography>
-                <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                  This developer hasn't made contributions to any repositories that we could analyze.
-                </Typography>
-              </Box>
-            </Card>
-          </Grid>
-        )}
+              </Grid>
+
+              {/* Repository Details Section */}
+              {repositories && repositories.length > 0 ? (
+                <>
+                  <Divider sx={{ my: 4 }} />
+                  <Typography variant="h6" fontWeight="bold" gutterBottom sx={{ mb: 3 }}>
+                    Top Repository Contributions
+                  </Typography>
+                  <Grid container spacing={3}>
+                    {repositories
+                      .sort((a, b) => (b.impact_score || 0) - (a.impact_score || 0))
+                      .slice(0, 4)
+                      .map((repo, index) => (
+                        <Grid item xs={12} md={6} key={index}>
+                          <Card sx={{ borderRadius: 3 }}>
+                            <CardContent sx={{ p: 3 }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                                  <Link
+                                    href={repo.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    sx={{ textDecoration: 'none' }}
+                                  >
+                                    {repo.name}
+                                  </Link>
+                                </Typography>
+                                <Chip 
+                                  label={`Impact: ${(repo.impact_score || 0).toFixed(2)}`}
+                                  color="primary"
+                                  size="small"
+                                />
+                              </Box>
+                              
+                              <Grid container spacing={2}>
+                                <Grid item xs={6} sm={3}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <Star sx={{ color: 'warning.main', mb: 1 }} />
+                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                      {repo.stars || 0}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                      Stars
+                                    </Typography>
+                                  </Box>
+                                </Grid>
+                                <Grid item xs={6} sm={3}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <MergeType sx={{ color: 'primary.main', mb: 1 }} />
+                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                      {repo.forks || 0}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                      Forks
+                                    </Typography>
+                                  </Box>
+                                </Grid>
+                                <Grid item xs={6} sm={3}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <Person sx={{ color: 'info.main', mb: 1 }} />
+                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                      {repo.num_contributors || 0}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                      Collaborators
+                                    </Typography>
+                                  </Box>
+                                </Grid>
+                                <Grid item xs={6} sm={3}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <Commit sx={{ color: 'success.main', mb: 1 }} />
+                                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                      {repo.num_commits || '0%'}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                      Contributions
+                                    </Typography>
+                                  </Box>
+                                </Grid>
+                              </Grid>
+                              
+                              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Chip
+                                  label={`Language: ${repo.primary_language || 'N/A'}`}
+                                  color="secondary"
+                                  size="small"
+                                  sx={{ mr: 1 }}
+                                />
+                                <Typography variant="body2" color="textSecondary">
+                                  Last updated: {repo.last_updated || 'N/A'}
+                                </Typography>
+                              </Box>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                  </Grid>
+                </>
+              ) : (
+                <>
+                  <Divider sx={{ my: 4 }} />
+                  <Card sx={{ borderRadius: 3, p: 3 }}>
+                    <Box sx={{ textAlign: 'center', py: 3 }}>
+                      <GitHub sx={{ fontSize: 60, color: 'text.secondary', opacity: 0.5, mb: 2 }} />
+                      <Typography variant="h6" color="textSecondary">
+                        No repository contributions data available
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                        This developer hasn't made contributions to any repositories that we could analyze.
+                      </Typography>
+                    </Box>
+                  </Card>
+                </>
+              )}
+            </AccordionDetails>
+          </Accordion>
+        </Grid>
         
         {/* Replace the Action Buttons with ShareOptions component */}
         <Grid item xs={12}>
