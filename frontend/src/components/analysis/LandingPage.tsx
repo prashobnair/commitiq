@@ -16,6 +16,8 @@ import {
   Avatar,
   LinearProgress,
   Chip,
+  Tooltip,
+  FormHelperText,
 } from '@mui/material';
 import {
   TrendingUp,
@@ -25,16 +27,26 @@ import {
   CompareArrows,
   Speed,
   People,
+  InfoOutlined,
 } from '@mui/icons-material';
 import AnalysisResults from './AnalysisResults';
 import LoadingOverlay from '../common/LoadingOverlay';
 import WaitingListModal from '../common/WaitingListModal';
-import useGitHubAnalysis from '../../hooks/useGitHubAnalysis';
+import { useAnalysisContext } from '../../contexts/AnalysisContext';
+
+// Examples for the placeholder tooltip
+const usernameExamples = [
+  'octocat',
+  'github.com/octocat',
+  'https://github.com/octocat',
+  '@octocat',
+  'https://github.com/octocat?tab=repositories',
+];
 
 const LandingPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [waitingListOpen, setWaitingListOpen] = useState(false);
-  const { loading, error, analysisData, analyzeProfile, resetAnalysis } = useGitHubAnalysis();
+  const { loading, error, analysisData, analyzeProfile, resetAnalysis } = useAnalysisContext();
   const theme = useTheme();
 
   const handleAnalyze = () => {
@@ -72,7 +84,7 @@ const LandingPage: React.FC = () => {
   const benefits = [
     {
       icon: <Speed />,
-      title: 'Faster Hiring',
+      title: 'Faster Screening',
       description: 'Quickly filter out top candidates from hundreds of profiles based on actual contributions',
     },
     {
@@ -90,15 +102,6 @@ const LandingPage: React.FC = () => {
   if (analysisData) {
     return (
       <Container maxWidth="lg" sx={{ mt: 8 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-          <Button
-            variant="outlined"
-            color="primary"
-            onClick={resetAnalysis}
-          >
-            ← Back to Search
-          </Button>
-        </Box>
         <AnalysisResults data={analysisData} onJoinWaitingList={openWaitingList} />
         <WaitingListModal open={waitingListOpen} onClose={closeWaitingList} />
       </Container>
@@ -182,7 +185,7 @@ const LandingPage: React.FC = () => {
                     maxWidth: '600px',
                   }}
                 >
-                  Go beyond green squares—leverage advanced GitHub analytics to pinpoint the most impactful developers in your candidate pool
+                  Leverage advanced GitHub analytics to pinpoint the most impactful developers in your candidate pool
                 </Typography>
 
                 <Paper
@@ -197,23 +200,55 @@ const LandingPage: React.FC = () => {
                     boxShadow: '0 8px 20px rgba(0,0,0,0.1)',
                   }}
                 >
-                  <TextField
-                    fullWidth
-                    placeholder="Enter GitHub username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    error={!!error}
-                    helperText={error}
-                    disabled={loading}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
-                    InputProps={{
-                      startAdornment: <GitHub color="action" sx={{ mr: 1, color: theme.palette.primary.main }} />,
-                    }}
-                    sx={{ 
-                      '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
-                      '& .MuiInputBase-root': { pl: 1 },
-                    }}
-                  />
+                  <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+                    <TextField
+                      fullWidth
+                      placeholder="Enter GitHub username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      error={!!error}
+                      disabled={loading}
+                      onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
+                      InputProps={{
+                        startAdornment: <GitHub color="action" sx={{ mr: 1, color: theme.palette.primary.main }} />,
+                        endAdornment: (
+                          <Tooltip 
+                            title={
+                              <Box>
+                                <Typography variant="subtitle2">Supported username formats:</Typography>
+                                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                  {usernameExamples.map((example, i) => (
+                                    <li key={i}><Typography variant="caption">{example}</Typography></li>
+                                  ))}
+                                </ul>
+                              </Box>
+                            }
+                            placement="top"
+                            arrow
+                          >
+                            <InfoOutlined 
+                              fontSize="small" 
+                              color="action" 
+                              sx={{ 
+                                ml: 1, 
+                                opacity: 0.6,
+                                cursor: 'pointer',
+                              }} 
+                            />
+                          </Tooltip>
+                        ),
+                      }}
+                      sx={{ 
+                        '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+                        '& .MuiInputBase-root': { pl: 1 },
+                      }}
+                    />
+                    {error && (
+                      <FormHelperText error sx={{ mx: 2, mb: 1 }}>
+                        {error}
+                      </FormHelperText>
+                    )}
+                  </Box>
                   <Button
                     variant="contained"
                     color="primary"

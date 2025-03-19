@@ -3,13 +3,17 @@ from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
-from .config import Config
+from .config import Config, configure_logging, APP_CONFIG
 from .api import api_bp  # Import api_bp instead of github_bp
 import logging
 import sys
 import time
 from logging.handlers import RotatingFileHandler
 # from asgiref.wsgi import WsgiToAsgi  # Comment out for now
+
+# Configure logging
+log_level = configure_logging()
+logger = logging.getLogger(__name__)
 
 def setup_logging(app):
     """
@@ -72,22 +76,42 @@ def setup_logging(app):
     
     return app_logger
 
-def create_app(config_class=Config):
-    app = Flask(__name__)
-    app.config.from_object(config_class)
+def create_app(test_config=None):
+    """Create and configure the Flask application."""
+    # Create the Flask app instance
+    app = Flask(__name__, instance_relative_config=True)
     
-    # Setup logging first, before anything else
-    logger = setup_logging(app)
+    # Apply configuration
+    app.config.from_mapping(**APP_CONFIG)
     
-    CORS(app)  # Enable CORS for all routes
-    
-    # Load environment variables
-    load_dotenv()
+    if test_config:
+        # Override with test config if provided
+        app.config.from_mapping(test_config)
+        
+    # Set up CORS
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Register blueprints
-    app.register_blueprint(api_bp, url_prefix='/api')  # Register api_bp
+    app.register_blueprint(api_bp, url_prefix='/api')
     
-    # Return the Flask app directly
+    # Log application startup
+    logger.info(f"CommitIQ application starting at {app.config.get('START_TIME', 'unknown time')}")
+    logger.info(f"Log level set to {logging.getLevelName(log_level)}")
+    
+    # Ensure instance folder exists
+    os.makedirs(app.instance_path, exist_ok=True)
+    logger.info(f"Instance path: {app.instance_path}")
+    
+    # Make sure log directory exists
+    log_dir = os.path.join(os.path.dirname(__file__), '../logs')
+    os.makedirs(log_dir, exist_ok=True)
+    logger.info(f"Log files are located in: {os.path.abspath(log_dir)}")
+    
+    # Add a health check route
+    @app.route('/health')
+    def health_check():
+        return {"status": "healthy"}
+    
     return app
     
     # Comment out ASGI conversion for now
