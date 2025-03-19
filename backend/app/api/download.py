@@ -13,6 +13,10 @@ import json
 from datetime import datetime
 import base64
 import io
+import subprocess
+import time
+from werkzeug.urls import url_quote
+import uuid
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -400,4 +404,87 @@ def download_report(analysis_id):
         return jsonify({'error': f'Failed to generate report: {str(e)}'}), 500
     finally:
         if conn:
-            conn.close() 
+            conn.close()
+
+@download_bp.route('/report/puppeteer/<string:username>/<int:analysis_id>', methods=['GET'])
+def download_puppeteer_pdf(username, analysis_id):
+    """Generate and download a visually appealing PDF using Puppeteer and the print page template.
+    
+    This endpoint uses Puppeteer to render the print page template and generate a high-quality PDF
+    that preserves the exact appearance of the web page, including styling and layout.
+    """
+    try:
+        # Create the URL for the print page
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        print_url = f"{frontend_url}/print/{username}?id={analysis_id}"
+        
+        # Create a unique temporary file
+        output_filename = f"commitiq_{username}_{analysis_id}_{int(time.time())}.pdf"
+        output_path = os.path.join(tempfile.gettempdir(), output_filename)
+        
+        # Get the path to the PDF generator script
+        script_path = os.path.join(os.getcwd(), 'pdf_generator.js')
+        
+        # If the script doesn't exist in the current directory, use the root directory
+        if not os.path.exists(script_path):
+            script_path = os.path.join(os.getcwd(), '..', '..', '..', 'pdf_generator.js')
+            
+        # Make sure script exists
+        if not os.path.exists(script_path):
+            logger.error(f"PDF generator script not found at {script_path}")
+            return jsonify({'error': 'PDF generator script not found'}), 500
+        
+        logger.info(f"Generating PDF for {username} with analysis ID {analysis_id}")
+        logger.info(f"Print URL: {print_url}")
+        logger.info(f"Output path: {output_path}")
+        logger.info(f"Script path: {script_path}")
+        
+        # Run the PDF generator script
+        process = subprocess.Popen(
+            ['node', script_path, print_url, output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        stdout, stderr = process.communicate(timeout=30)  # 30-second timeout
+        
+        # Log output
+        logger.info(f"PDF generator stdout: {stdout.decode('utf-8')}")
+        if stderr:
+            logger.warning(f"PDF generator stderr: {stderr.decode('utf-8')}")
+            
+        if process.returncode != 0:
+            logger.error(f"PDF generator exited with code {process.returncode}")
+            return jsonify({'error': 'Failed to generate PDF'}), 500
+            
+        # Check if file exists
+        if not os.path.exists(output_path):
+            logger.error(f"PDF file not found at {output_path}")
+            return jsonify({'error': 'PDF file not generated'}), 500
+            
+        # Get file size
+        file_size = os.path.getsize(output_path)
+        logger.info(f"PDF file size: {file_size} bytes")
+        
+        if file_size == 0:
+            logger.error("PDF file is empty")
+            return jsonify({'error': 'PDF file is empty'}), 500
+        
+        # Generate download filename
+        safe_username = ''.join(c if c.isalnum() else '_' for c in username)
+        download_filename = f"{safe_username}_commitiq_profile_{datetime.now().strftime('%Y%m%d')}.pdf"
+        
+        # Send the file
+        return send_file(
+            output_path,
+            as_attachment=True,
+            download_name=download_filename,
+            mimetype='application/pdf'
+        )
+        
+    except subprocess.TimeoutExpired:
+        logger.error("PDF generation timed out")
+        return jsonify({'error': 'PDF generation timed out'}), 504
+    except Exception as e:
+        logger.error(f"Error generating PDF: {e}")
+        return jsonify({'error': f'Failed to generate PDF: {str(e)}'}), 500 

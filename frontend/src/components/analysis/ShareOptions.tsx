@@ -22,6 +22,8 @@ import {
   MenuItem,
   InputLabel,
   InputAdornment,
+  RadioGroup,
+  Radio,
 } from '@mui/material';
 import {
   Share as ShareIcon,
@@ -29,6 +31,9 @@ import {
   FileCopy as CopyIcon,
   Email as EmailIcon,
   Password as PasswordIcon,
+  PictureAsPdf as PdfIcon,
+  Code as CodeIcon,
+  Print as PrintIcon,
 } from '@mui/icons-material';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../config';
@@ -51,7 +56,7 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   const [isPublic, setIsPublic] = useState<boolean>(true);
   const [requiresPasscode, setRequiresPasscode] = useState<boolean>(false);
   const [passcode, setPasscode] = useState<string>('');
-  const [downloadFormat, setDownloadFormat] = useState<'pdf' | 'json'>('pdf');
+  const [downloadFormat, setDownloadFormat] = useState<'pdf-reportlab' | 'pdf-puppeteer' | 'json'>('pdf-puppeteer');
   
   const handleShareOpen = () => {
     setShareDialogOpen(true);
@@ -135,8 +140,17 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   const handleDownload = () => {
     setIsLoading(true);
     
-    // Construct the correct URL
-    const downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=${downloadFormat}`;
+    // Determine the URL based on the selected format
+    let downloadUrl;
+    if (downloadFormat === 'json') {
+      downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=json`;
+    } else if (downloadFormat === 'pdf-reportlab') {
+      downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=pdf`;
+    } else {
+      // Use the new Puppeteer-based PDF endpoint
+      downloadUrl = `${API_BASE_URL}/api/download/report/puppeteer/${githubUsername}/${analysisId}`;
+    }
+    
     console.log(`Initiating download from: ${downloadUrl}`);
     
     // Create a fetch request to verify the endpoint works before opening it
@@ -323,16 +337,34 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
               labelId="format-label"
               value={downloadFormat}
               label="Download Format"
-              onChange={(e) => setDownloadFormat(e.target.value as 'pdf' | 'json')}
+              onChange={(e) => setDownloadFormat(e.target.value as 'pdf-reportlab' | 'pdf-puppeteer' | 'json')}
             >
-              <MenuItem value="pdf">PDF Report</MenuItem>
-              <MenuItem value="json">JSON Data</MenuItem>
+              <MenuItem value="pdf-puppeteer">
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <PrintIcon sx={{ mr: 1 }} />
+                  <Typography>Modern PDF Report</Typography>
+                </Box>
+              </MenuItem>
+              <MenuItem value="pdf-reportlab">
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <PdfIcon sx={{ mr: 1 }} />
+                  <Typography>Simple PDF Report</Typography>
+                </Box>
+              </MenuItem>
+              <MenuItem value="json">
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <CodeIcon sx={{ mr: 1 }} />
+                  <Typography>JSON Data</Typography>
+                </Box>
+              </MenuItem>
             </Select>
           </FormControl>
           
           <Typography variant="caption" sx={{ mt: 2, display: 'block' }}>
-            {downloadFormat === 'pdf' ? (
-              <>PDF reports include formatted data, visualizations, and are perfect for sharing with stakeholders.</>
+            {downloadFormat === 'pdf-puppeteer' ? (
+              <>Modern PDF reports feature a beautifully designed layout with all visualizations and metrics intact, perfect for presentations.</>
+            ) : downloadFormat === 'pdf-reportlab' ? (
+              <>Simple PDF reports include basic formatted data in a clean layout for easy reading.</>
             ) : (
               <>JSON data contains the raw analysis results for further processing or integration.</>
             )}
