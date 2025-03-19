@@ -14,12 +14,12 @@ load_dotenv(dotenv_path=dotenv_path)
 DEBUG = os.getenv('DEBUG', 'true').lower() == 'true'  # Set to true for debugging
 
 # Set default logging level
-DEFAULT_LOG_LEVEL = logging.DEBUG  # Always use DEBUG for better visibility
+DEFAULT_LOG_LEVEL = logging.INFO  # Set default to INFO for less verbose output
 
 # Configure logging
 def configure_logging():
     """Configure logging for the application."""
-    log_level = os.getenv('LOG_LEVEL', 'DEBUG')  # Default to DEBUG
+    log_level = os.getenv('LOG_LEVEL', 'INFO')  # Default to INFO
     numeric_level = getattr(logging, log_level.upper(), DEFAULT_LOG_LEVEL)
     
     # Configure root logger with more details
@@ -35,12 +35,12 @@ def configure_logging():
     # Set up file handlers
     debug_file = os.path.join(logs_dir, 'debug.log')
     file_handler = logging.FileHandler(debug_file)
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.DEBUG)  # Keep DEBUG level for file logs
     file_handler.setFormatter(log_format)
     
     # Set up console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
+    console_handler.setLevel(logging.INFO)  # Set to INFO for console output
     console_handler.setFormatter(log_format)
     
     # Configure root logger
@@ -56,10 +56,10 @@ def configure_logging():
     root_logger.addHandler(console_handler)
     
     # Set more specific logger levels
-    logging.getLogger('app').setLevel(logging.DEBUG)
-    logging.getLogger('app.api').setLevel(logging.DEBUG)
-    logging.getLogger('app.utils').setLevel(logging.DEBUG)
-    logging.getLogger('app.api.analysis_tracking').setLevel(logging.DEBUG)
+    logging.getLogger('app').setLevel(logging.INFO)
+    logging.getLogger('app.api').setLevel(logging.INFO)
+    logging.getLogger('app.utils').setLevel(logging.INFO)
+    logging.getLogger('app.api.analysis_tracking').setLevel(logging.INFO)
     
     # Reduce noise from third-party libraries
     logging.getLogger('urllib3').setLevel(logging.WARNING)
