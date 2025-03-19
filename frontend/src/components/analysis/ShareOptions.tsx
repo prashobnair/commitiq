@@ -22,8 +22,6 @@ import {
   MenuItem,
   InputLabel,
   InputAdornment,
-  RadioGroup,
-  Radio,
 } from '@mui/material';
 import {
   Share as ShareIcon,
@@ -31,9 +29,6 @@ import {
   FileCopy as CopyIcon,
   Email as EmailIcon,
   Password as PasswordIcon,
-  PictureAsPdf as PdfIcon,
-  Code as CodeIcon,
-  Print as PrintIcon,
 } from '@mui/icons-material';
 import { useAuthContext } from '../../contexts/AuthContext';
 import { API_BASE_URL } from '../../config';
@@ -46,17 +41,15 @@ interface ShareOptionsProps {
 const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername }) => {
   const { user } = useAuthContext();
   const [shareDialogOpen, setShareDialogOpen] = useState<boolean>(false);
-  const [downloadDialogOpen, setDownloadDialogOpen] = useState<boolean>(false);
   const [shareLink, setShareLink] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
   const [snackbarMessage, setSnackbarMessage] = useState<string>('');
-  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error' | 'info' | 'warning'>('success');
   const [expirationDays, setExpirationDays] = useState<number>(30);
   const [isPublic, setIsPublic] = useState<boolean>(true);
   const [requiresPasscode, setRequiresPasscode] = useState<boolean>(false);
   const [passcode, setPasscode] = useState<string>('');
-  const [downloadFormat, setDownloadFormat] = useState<'pdf-reportlab' | 'pdf-puppeteer' | 'json'>('pdf-puppeteer');
   
   const handleShareOpen = () => {
     setShareDialogOpen(true);
@@ -64,14 +57,6 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   
   const handleShareClose = () => {
     setShareDialogOpen(false);
-  };
-  
-  const handleDownloadOpen = () => {
-    setDownloadDialogOpen(true);
-  };
-  
-  const handleDownloadClose = () => {
-    setDownloadDialogOpen(false);
   };
   
   const handleShareCreate = async () => {
@@ -140,43 +125,30 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   const handleDownload = () => {
     setIsLoading(true);
     
-    // Determine the URL based on the selected format
-    let downloadUrl;
-    if (downloadFormat === 'json') {
-      downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=json`;
-    } else if (downloadFormat === 'pdf-reportlab') {
-      downloadUrl = `${API_BASE_URL}/api/download/report/${analysisId}?format=pdf`;
-    } else {
-      // Use the new Puppeteer-based PDF endpoint
-      downloadUrl = `${API_BASE_URL}/api/download/report/puppeteer/${githubUsername}/${analysisId}`;
+    try {
+      // Extract the base URL without the /api suffix if it exists
+      const baseUrl = API_BASE_URL.endsWith('/api') 
+        ? API_BASE_URL.slice(0, -4) 
+        : API_BASE_URL;
+      
+      // Use the simple PDF endpoint with the correct URL structure
+      const downloadUrl = `${baseUrl}/api/download/report/${analysisId}?format=pdf`;
+      
+      console.log(`Initiating download from: ${downloadUrl}`);
+      
+      // Direct download approach - skip the fetch check
+      window.open(downloadUrl, '_blank');
+      
+      setSnackbarMessage('PDF download initiated');
+      setSnackbarSeverity('success');
+    } catch (error) {
+      console.error('Error downloading report:', error);
+      setSnackbarMessage(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setSnackbarSeverity('error');
+    } finally {
+      setIsLoading(false);
+      setSnackbarOpen(true);
     }
-    
-    console.log(`Initiating download from: ${downloadUrl}`);
-    
-    // Create a fetch request to verify the endpoint works before opening it
-    fetch(downloadUrl)
-      .then(response => {
-        if (!response.ok) {
-          return response.json().then(data => {
-            throw new Error(data.error || 'Failed to download report');
-          });
-        }
-        
-        // If the response is OK, open the download in a new tab
-        window.open(downloadUrl, '_blank');
-        setSnackbarMessage('Download initiated successfully!');
-        setSnackbarSeverity('success');
-        setDownloadDialogOpen(false);
-      })
-      .catch(error => {
-        console.error('Error downloading report:', error);
-        setSnackbarMessage(`Download failed: ${error.message}`);
-        setSnackbarSeverity('error');
-      })
-      .finally(() => {
-        setIsLoading(false);
-        setSnackbarOpen(true);
-      });
   };
   
   const handleSnackbarClose = () => {
@@ -209,10 +181,11 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
       <Button
         variant="outlined"
         startIcon={<DownloadIcon />}
-        onClick={handleDownloadOpen}
+        onClick={handleDownload}
         color="secondary"
+        disabled={isLoading}
       >
-        Download Report
+        {isLoading ? <CircularProgress size={24} /> : 'Download PDF'}
       </Button>
       
       {/* Share Dialog */}
@@ -320,67 +293,6 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
         </DialogContent>
         <DialogActions>
           <Button onClick={handleShareClose}>Close</Button>
-        </DialogActions>
-      </Dialog>
-      
-      {/* Download Dialog */}
-      <Dialog open={downloadDialogOpen} onClose={handleDownloadClose}>
-        <DialogTitle>Download GitHub Analysis</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Download the GitHub analysis for <strong>{githubUsername}</strong> in your preferred format.
-          </DialogContentText>
-          
-          <FormControl fullWidth sx={{ mt: 3 }}>
-            <InputLabel id="format-label">Download Format</InputLabel>
-            <Select
-              labelId="format-label"
-              value={downloadFormat}
-              label="Download Format"
-              onChange={(e) => setDownloadFormat(e.target.value as 'pdf-reportlab' | 'pdf-puppeteer' | 'json')}
-            >
-              <MenuItem value="pdf-puppeteer">
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <PrintIcon sx={{ mr: 1 }} />
-                  <Typography>Modern PDF Report</Typography>
-                </Box>
-              </MenuItem>
-              <MenuItem value="pdf-reportlab">
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <PdfIcon sx={{ mr: 1 }} />
-                  <Typography>Simple PDF Report</Typography>
-                </Box>
-              </MenuItem>
-              <MenuItem value="json">
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  <CodeIcon sx={{ mr: 1 }} />
-                  <Typography>JSON Data</Typography>
-                </Box>
-              </MenuItem>
-            </Select>
-          </FormControl>
-          
-          <Typography variant="caption" sx={{ mt: 2, display: 'block' }}>
-            {downloadFormat === 'pdf-puppeteer' ? (
-              <>Modern PDF reports feature a beautifully designed layout with all visualizations and metrics intact, perfect for presentations.</>
-            ) : downloadFormat === 'pdf-reportlab' ? (
-              <>Simple PDF reports include basic formatted data in a clean layout for easy reading.</>
-            ) : (
-              <>JSON data contains the raw analysis results for further processing or integration.</>
-            )}
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleDownloadClose}>Cancel</Button>
-          <Button 
-            onClick={handleDownload}
-            variant="contained" 
-            color="primary"
-            disabled={isLoading}
-            startIcon={isLoading ? <CircularProgress size={20} /> : <DownloadIcon />}
-          >
-            Download
-          </Button>
         </DialogActions>
       </Dialog>
       

@@ -308,13 +308,32 @@ const PrintPage: React.FC = () => {
               size: letter;
               margin: 0;
             }
-            body {
+            body, html {
               margin: 0;
+              padding: 0;
+              width: 100%;
+              height: auto !important;
+              overflow: visible !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
+              color-adjust: exact !important;
             }
             .page-break {
               page-break-before: always;
+            }
+            .print-section, .print-container {
+              display: block !important;
+              visibility: visible !important;
+              opacity: 1 !important;
+              height: auto !important;
+              overflow: visible !important;
+              position: relative !important;
+              page-break-inside: avoid;
+            }
+            .background-gradient, [class*='gradient'] {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              color-adjust: exact !important;
             }
           }
           
@@ -325,6 +344,7 @@ const PrintPage: React.FC = () => {
       </Head>
       
       <Box 
+        className="print-container"
         sx={{ 
           width: '100%',
           minHeight: '100vh',
@@ -335,6 +355,7 @@ const PrintPage: React.FC = () => {
       >
         {/* Background gradient wrapper */}
         <Box
+          className="background-gradient print-section"
           sx={{
             background: 'linear-gradient(to right, #5271ff, #0fe3a2)',
             minHeight: '100vh',
@@ -342,9 +363,10 @@ const PrintPage: React.FC = () => {
             pb: 8
           }}
         >
-          <Container maxWidth="md">
+          <Container maxWidth="md" className="print-container">
             <Paper
               elevation={0}
+              className="print-section"
               sx={{
                 p: 4,
                 borderRadius: 2,
@@ -353,68 +375,84 @@ const PrintPage: React.FC = () => {
               }}
             >
               {/* Print Header */}
-              <React.Suspense fallback={<div>Loading header...</div>}>
-                <PrintHeader 
-                  username={username}
-                  avatarUrl={avatarUrl}
-                  name={name}
-                  overallRating={overallRating}
-                />
+              <React.Suspense fallback={<div className="print-section">Loading header...</div>}>
+                <Box className="print-section" data-testid="header-section">
+                  <PrintHeader 
+                    username={username}
+                    avatarUrl={avatarUrl}
+                    name={name}
+                    overallRating={overallRating}
+                  />
+                </Box>
               </React.Suspense>
               
               {/* Overall Impact Score */}
-              <React.Suspense fallback={<div>Loading overall impact score...</div>}>
-                <OverallImpactScore 
-                  score={impact_score}
-                  rating={overallRating}
-                />
+              <React.Suspense fallback={<div className="print-section">Loading overall impact score...</div>}>
+                <Box className="print-section" data-testid="impact-score-section">
+                  <OverallImpactScore 
+                    score={impact_score}
+                    rating={overallRating}
+                  />
+                </Box>
               </React.Suspense>
               
               {/* Developer Summary */}
-              <React.Suspense fallback={<div>Loading developer summary...</div>}>
-                <DeveloperSummary 
-                  username={username}
-                  name={name}
-                  commits={commits}
-                  pulls={pulls}
-                  consistency={consistency}
-                  reviews={reviews}
-                />
+              <React.Suspense fallback={<div className="print-section">Loading developer summary...</div>}>
+                <Box className="print-section" data-testid="developer-summary-section">
+                  <DeveloperSummary 
+                    username={username}
+                    name={name}
+                    commits={commits}
+                    pulls={pulls}
+                    consistency={consistency}
+                    reviews={reviews}
+                  />
+                </Box>
               </React.Suspense>
               
               {/* Key Insights */}
-              <React.Suspense fallback={<div>Loading key insights...</div>}>
-                <KeyInsights 
-                  strengths={strengths}
-                  considerations={considerations}
-                />
+              <React.Suspense fallback={<div className="print-section">Loading key insights...</div>}>
+                <Box className="print-section" data-testid="insights-section">
+                  <KeyInsights 
+                    strengths={strengths}
+                    considerations={considerations}
+                  />
+                </Box>
               </React.Suspense>
               
               {/* Key Metrics */}
-              <React.Suspense fallback={<div>Loading metrics...</div>}>
-                <KeyMetrics 
-                  pulls={pulls}
-                  issues={issues}
-                  reviews={reviews}
-                  commits={commits}
-                  consistency={consistency}
-                  repoImpact={repos_impact}
-                />
+              <React.Suspense fallback={<div className="print-section">Loading metrics...</div>}>
+                <Box className="print-section" data-testid="metrics-section">
+                  <KeyMetrics 
+                    pulls={pulls}
+                    issues={issues}
+                    reviews={reviews}
+                    commits={commits}
+                    consistency={consistency}
+                    repoImpact={repos_impact}
+                  />
+                </Box>
               </React.Suspense>
               
               {/* Top Languages */}
               {top_languages && top_languages.length > 0 && (
-                <TopLanguages languages={top_languages} />
+                <Box className="print-section" data-testid="languages-section">
+                  <TopLanguages languages={top_languages} />
+                </Box>
               )}
               
               {/* Top Repositories */}
               {top_repositories && top_repositories.length > 0 && (
-                <TopRepositories repositories={top_repositories} />
+                <Box className="print-section" data-testid="repositories-section">
+                  <TopRepositories repositories={top_repositories} />
+                </Box>
               )}
               
               {/* Footer */}
-              <React.Suspense fallback={<div>Loading footer...</div>}>
-                <PrintFooter />
+              <React.Suspense fallback={<div className="print-section">Loading footer...</div>}>
+                <Box className="print-section" data-testid="footer-section">
+                  <PrintFooter />
+                </Box>
               </React.Suspense>
             </Paper>
           </Container>

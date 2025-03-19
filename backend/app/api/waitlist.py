@@ -11,9 +11,12 @@ import hashlib
 import base64
 import html
 from datetime import datetime
+from pathlib import Path
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from root directory .env file
+root_dir = Path(__file__).resolve().parent.parent.parent.parent
+dotenv_path = os.path.join(root_dir, '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
 # Get module logger
 logger = logging.getLogger(__name__)

@@ -2,9 +2,12 @@
 import os
 import logging
 from dotenv import load_dotenv
+from pathlib import Path
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from the root directory .env file
+root_dir = Path(__file__).resolve().parent.parent.parent
+dotenv_path = os.path.join(root_dir, '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
 # Debug mode - set to True for development, False for production
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
