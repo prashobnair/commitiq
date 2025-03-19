@@ -398,13 +398,6 @@ def download_report(analysis_id):
         
         elements.append(Paragraph(copyright_text, center_style))
         
-        # Add a direct Visit Website link as a standalone element for better visibility
-        elements.append(Spacer(1, 0.05 * inch))
-        elements.append(Paragraph(
-            f"<a href='{website_url}' color='blue'><u>Visit CommitIQ.ai</u></a>",
-            link_style
-        ))
-        
         # Build the document
         doc.build(elements)
         
