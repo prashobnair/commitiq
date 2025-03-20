@@ -18,6 +18,7 @@ import {
   Chip,
   Tooltip,
   FormHelperText,
+  Alert,
 } from '@mui/material';
 import {
   TrendingUp,
@@ -28,6 +29,7 @@ import {
   Speed,
   People,
   InfoOutlined,
+  ErrorOutline,
 } from '@mui/icons-material';
 import AnalysisResults from './AnalysisResults';
 import LoadingOverlay from '../common/LoadingOverlay';
@@ -200,55 +202,48 @@ const LandingPage: React.FC = () => {
                     boxShadow: '0 8px 20px rgba(0,0,0,0.1)',
                   }}
                 >
-                  <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
-                    <TextField
-                      fullWidth
-                      placeholder="Enter GitHub username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      error={!!error}
-                      disabled={loading}
-                      onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
-                      InputProps={{
-                        startAdornment: <GitHub color="action" sx={{ mr: 1, color: theme.palette.primary.main }} />,
-                        endAdornment: (
-                          <Tooltip 
-                            title={
-                              <Box>
-                                <Typography variant="subtitle2">Supported username formats:</Typography>
-                                <ul style={{ margin: 0, paddingLeft: 16 }}>
-                                  {usernameExamples.map((example, i) => (
-                                    <li key={i}><Typography variant="caption">{example}</Typography></li>
-                                  ))}
-                                </ul>
-                              </Box>
-                            }
-                            placement="top"
-                            arrow
-                          >
-                            <InfoOutlined 
-                              fontSize="small" 
-                              color="action" 
-                              sx={{ 
-                                ml: 1, 
-                                opacity: 0.6,
-                                cursor: 'pointer',
-                              }} 
-                            />
-                          </Tooltip>
-                        ),
-                      }}
-                      sx={{ 
-                        '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
-                        '& .MuiInputBase-root': { pl: 1 },
-                      }}
-                    />
-                    {error && (
-                      <FormHelperText error sx={{ mx: 2, mb: 1 }}>
-                        {error}
-                      </FormHelperText>
-                    )}
-                  </Box>
+                  <TextField
+                    fullWidth
+                    placeholder="Enter GitHub username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    error={!!error}
+                    disabled={loading}
+                    onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
+                    InputProps={{
+                      startAdornment: <GitHub color="action" sx={{ mr: 1, color: theme.palette.primary.main }} />,
+                      endAdornment: (
+                        <Tooltip 
+                          title={
+                            <Box>
+                              <Typography variant="subtitle2">Supported username formats:</Typography>
+                              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                                {usernameExamples.map((example, i) => (
+                                  <li key={i}><Typography variant="caption">{example}</Typography></li>
+                                ))}
+                              </ul>
+                            </Box>
+                          }
+                          placement="top"
+                          arrow
+                        >
+                          <InfoOutlined 
+                            fontSize="small" 
+                            color="action" 
+                            sx={{ 
+                              ml: 1, 
+                              opacity: 0.6,
+                              cursor: 'pointer',
+                            }} 
+                          />
+                        </Tooltip>
+                      ),
+                    }}
+                    sx={{ 
+                      '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+                      '& .MuiInputBase-root': { pl: 1 },
+                    }}
+                  />
                   <Button
                     variant="contained"
                     color="primary"
@@ -264,6 +259,55 @@ const LandingPage: React.FC = () => {
                     {loading ? <CircularProgress size={24} color="inherit" /> : 'Analyze'}
                   </Button>
                 </Paper>
+                
+                {/* 
+                  Option 1: Custom styled FormHelperText - uncomment to use this version
+                  
+                {error && (
+                  <FormHelperText 
+                    error 
+                    sx={{ 
+                      mx: 0.5, 
+                      mt: 1, 
+                      fontSize: '0.95rem',
+                      fontWeight: 500,
+                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                      color: '#d32f2f', // Using custom color instead of 'error.main' for better contrast
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid #ff3333',
+                      display: 'inline-flex',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <ErrorOutline sx={{ fontSize: '1rem', mr: 0.8 }} />
+                    {error}
+                  </FormHelperText>
+                )}
+                */}
+                
+                {/* Option 2: Alert component - current implementation */}
+                {error && (
+                  <Alert 
+                    severity="error"
+                    variant="filled"
+                    sx={{ 
+                      mt: 1,
+                      mb: 2,
+                      maxWidth: '600px',
+                      backgroundColor: '#f44336', // A more vibrant red for better contrast
+                      color: 'white',
+                      fontWeight: 500,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                      border: '1px solid #d32f2f',
+                      '& .MuiAlert-icon': {
+                        color: 'white'
+                      }
+                    }}
+                  >
+                    {error}
+                  </Alert>
+                )}
 
                 <Box sx={{ display: 'flex', mt: 2, alignItems: 'center' }}>
                   <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.8)', mr: 2 }}>
@@ -429,7 +473,7 @@ const LandingPage: React.FC = () => {
                             Developer Summary
                           </Typography>
                           <Typography variant="body2" sx={{ display: 'block', mt: 1, mb: 1, fontSize: '0.8rem' }}>
-                            John has made 356 commits and 87 PRs with 42 code reviews, showing strong collaboration and consistent activity.
+                          John demonstrates a highly collaborative approach, actively contributing to team projects
                           </Typography>
                           
                           <Box sx={{ 
@@ -446,7 +490,7 @@ const LandingPage: React.FC = () => {
                               
                               <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
                                 <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'success.main', mr: 1.5, flexShrink: 0 }} />
-                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Excellent consistency (76.2% active days)</Typography>
+                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Exceptional consistency in development activity, suggesting strong reliability</Typography>
                               </Box>
                             </Box>
                             

@@ -10,6 +10,7 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 from .models import db  # Import the SQLAlchemy db instance
+from flask_compress import Compress
 # from asgiref.wsgi import WsgiToAsgi  # Comment out for now
 
 # Configure logging
@@ -88,6 +89,19 @@ def create_app(test_config=None):
     # Configure database
     app.config['SQLALCHEMY_DATABASE_URI'] = get_database_uri()
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    # Enable response compression
+    app.config['COMPRESS_ALGORITHM'] = 'gzip'
+    app.config['COMPRESS_MIMETYPES'] = [
+        'text/html', 
+        'text/css', 
+        'text/xml', 
+        'application/json', 
+        'application/javascript'
+    ]
+    app.config['COMPRESS_LEVEL'] = 6  # Optimal level for speed vs compression ratio
+    app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses larger than 500 bytes
+    Compress(app)
     
     if test_config:
         # Override with test config if provided
