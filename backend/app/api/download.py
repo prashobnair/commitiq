@@ -20,6 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from ..utils.analysis_service import analysis_service
+from ..utils.response_optimizer import response_optimizer
 
 # Get module logger
 logger = logging.getLogger(__name__)
@@ -72,21 +73,29 @@ def download_report_by_username():
                 'analysis': cached_result['analysis']
             }
             
+            # Optimize the JSON payload to reduce size
+            optimized_result = response_optimizer.optimize_report_response(result)
+            
             # Generate filename
             safe_username = ''.join(c if c.isalnum() else '_' for c in username)
             filename = f"CommitIQ_Analysis_{safe_username}_{datetime.now().strftime('%Y%m%d')}.json"
             
             # Create a temporary file
             with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
-                tmp.write(json.dumps(result, indent=2).encode('utf-8'))
+                tmp.write(json.dumps(optimized_result, indent=2).encode('utf-8'))
                 tmp_path = tmp.name
                 
-            return send_file(
+            response = send_file(
                 tmp_path,
                 as_attachment=True,
                 download_name=filename,
                 mimetype='application/json'
             )
+            
+            # Add cache headers for downloaded files
+            response.headers['Cache-Control'] = 'private, max-age=86400'  # 24 hour client cache
+            
+            return response
         else:
             # For PDF format, we need to generate the PDF report
             # We'll create a mock analysis object to use with the existing PDF generation code
@@ -617,21 +626,29 @@ def download_report(analysis_id):
             elif analysis.get('full_analysis_data'):
                 result['analysis'] = analysis['full_analysis_data']
             
+            # Optimize the JSON payload to reduce size
+            optimized_result = response_optimizer.optimize_report_response(result)
+            
             # Generate filename
             safe_username = ''.join(c if c.isalnum() else '_' for c in analysis['github_username'])
             filename = f"CommitIQ_Analysis_{safe_username}_{datetime.now().strftime('%Y%m%d')}.json"
             
             # Create a temporary file
             with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
-                tmp.write(json.dumps(result, indent=2).encode('utf-8'))
+                tmp.write(json.dumps(optimized_result, indent=2).encode('utf-8'))
                 tmp_path = tmp.name
                 
-            return send_file(
+            response = send_file(
                 tmp_path,
                 as_attachment=True,
                 download_name=filename,
                 mimetype='application/json'
             )
+            
+            # Add cache headers for downloaded files
+            response.headers['Cache-Control'] = 'private, max-age=86400'  # 24 hour client cache
+            
+            return response
             
         return generate_pdf_report(analysis)
         

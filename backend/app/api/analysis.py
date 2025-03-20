@@ -1,6 +1,7 @@
 # backend/app/api/analysis.py
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, make_response
 from ..utils.analysis_service import analysis_service
+from ..utils.response_optimizer import response_optimizer
 from ..utils import normalize_github_username
 from .analysis_tracking import store_analysis_result
 import logging
@@ -39,6 +40,10 @@ def analyze_user_post():
     """Analyze a GitHub user profile - POST endpoint for frontend compatibility.
     
     Accepts a JSON payload with 'username' and optional 'email' fields.
+    
+    Query Parameters:
+        minimal (bool): If true, returns a minimal response with just essential data
+        fields (str): Comma-separated list of fields to include in the response
     """
     data = request.get_json()
     if not data or 'username' not in data:
@@ -48,6 +53,11 @@ def analyze_user_post():
     
     username = data.get('username')
     email = data.get('email')  # Optional email for tracking
+    
+    # Extract response optimization parameters
+    minimal_mode = request.args.get('minimal', 'false').lower() == 'true'
+    fields = request.args.get('fields')
+    field_list = fields.split(',') if fields else None
     
     logger.info(f"Analyzing user from POST request: {username}, email: {email}, IP: {request.remote_addr}")
     
@@ -98,7 +108,22 @@ def analyze_user_post():
                     daemon=True
                 ).start()
             
-            return jsonify(cached_result)
+            # Optimize the response based on client requirements
+            optimized_result = response_optimizer.optimize_analysis_response(
+                cached_result, 
+                minimal=minimal_mode,
+                fields=field_list
+            )
+            
+            # Generate ETag for the response
+            etag = response_optimizer.get_etag_for_data(optimized_result)
+            
+            # Create a response with appropriate headers
+            response = make_response(jsonify(optimized_result))
+            response.headers['ETag'] = etag
+            response.headers['Cache-Control'] = 'private, max-age=300'
+            
+            return response
             
         # Use the analysis service to fetch and process data
         logger.info(f"Fetching GitHub data for {normalized_username}")
@@ -184,8 +209,23 @@ def analyze_user_post():
             daemon=True
         ).start()
         
+        # Optimize the response based on client requirements
+        optimized_result = response_optimizer.optimize_analysis_response(
+            result, 
+            minimal=minimal_mode,
+            fields=field_list
+        )
+        
+        # Generate ETag for the response
+        etag = response_optimizer.get_etag_for_data(optimized_result)
+        
+        # Create a response with appropriate headers
+        response = make_response(jsonify(optimized_result))
+        response.headers['ETag'] = etag
+        response.headers['Cache-Control'] = 'private, max-age=300'
+        
         logger.info(f"Analysis complete for {normalized_username}, impact score: {impact_score}, from IP: {request.remote_addr}")
-        return jsonify(result)
+        return response
         
     except Exception as e:
         logger.exception(f"Exception in analyze_user_post for {normalized_username} from IP: {request.remote_addr}: {str(e)}")
@@ -212,11 +252,19 @@ def analyze_user(username):
     """Analyze a GitHub user profile - GET endpoint.
     
     Accepts username as a URL parameter and optional email as a query param.
+    
+    Query Parameters:
+        email (str): Optional email for tracking
+        minimal (bool): If true, returns a minimal response with just essential data
+        fields (str): Comma-separated list of fields to include in the response
     """
     logger.info(f"Analyzing user input: {username} from IP: {request.remote_addr}")  # Log the original input
     
-    # Get optional email from query param
+    # Get optional parameters
     email = request.args.get('email')
+    minimal_mode = request.args.get('minimal', 'false').lower() == 'true'
+    fields = request.args.get('fields')
+    field_list = fields.split(',') if fields else None
     
     # Normalize the GitHub username
     normalized_username = normalize_github_username(username)
@@ -245,5 +293,13 @@ def analyze_user(username):
         'email': email
     }
     request.get_json = lambda: mock_data
+    
+    # Pass through the optimization parameters
+    if minimal_mode:
+        request.args = dict(request.args)
+        request.args['minimal'] = 'true'
+    if fields:
+        request.args = dict(request.args)
+        request.args['fields'] = fields
     
     return analyze_user_post()
