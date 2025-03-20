@@ -18,20 +18,21 @@ def analyze_user_post():
     """
     data = request.get_json()
     if not data or 'username' not in data:
-        error_response = {'error': 'Username is required in the request body'}
+        error_response = {'error': 'Username is required'}
+        logger.error(f"Missing username in request: {data}")
         return jsonify(error_response), 400
     
     username = data.get('username')
     email = data.get('email')  # Optional email for tracking
     
-    logger.info(f"Analyzing user from POST request: {username}, email: {email}")
+    logger.info(f"Analyzing user from POST request: {username}, email: {email}, IP: {request.remote_addr}")
     
     # Normalize the GitHub username
     normalized_username = normalize_github_username(username)
     
     if not normalized_username:
-        logger.error(f"Invalid GitHub username format: {username}")
-        error_response = {'error': 'Invalid GitHub username format'}
+        logger.error(f"Invalid GitHub username format: {username} from IP: {request.remote_addr}")
+        error_response = {'error': 'Invalid username format'}
         
         # Track failed analysis attempt due to invalid format
         store_analysis_result(
@@ -48,16 +49,17 @@ def analyze_user_post():
     
     # Log the normalized username if it's different
     if normalized_username != username:
-        logger.info(f"Normalized username: {normalized_username}")
+        logger.info(f"Normalized username: {username} -> {normalized_username}")
     
     try:
         # Use the analysis service to fetch and process data
+        logger.info(f"Fetching GitHub data for {normalized_username}")
         github_data = analysis_service.fetch_all_data(normalized_username)
-        logger.debug(f"Github data fetched for {normalized_username}")
+        logger.debug(f"Github data fetched for {normalized_username}, data type: {type(github_data)}")
         
         # Check for errors in github_data
         if 'error' in github_data:
-            logger.error(f"Error during github data fetching: {github_data['error']}")
+            logger.error(f"Error during github data fetching for {normalized_username}: {github_data['error']} from IP: {request.remote_addr}")
             error_response = {'error': github_data['error']}
             
             # Track failed analysis attempt
@@ -74,8 +76,9 @@ def analyze_user_post():
             return jsonify(error_response), 500
             
         # Process the github data using analysis service
+        logger.info(f"Aggregating data for {normalized_username}")
         aggregated_data = analysis_service.aggregate_user_data(normalized_username, github_data)
-        logger.debug(f"Data aggregated for {normalized_username}")
+        logger.debug(f"Data aggregated for {normalized_username}, data keys: {list(aggregated_data.keys()) if isinstance(aggregated_data, dict) else 'not a dict'}")
 
         # Check for errors returned by aggregate_user_data
         if 'error' in aggregated_data:
@@ -83,9 +86,10 @@ def analyze_user_post():
                 # If it is a dict, it is the github api error
                 error_response = aggregated_data['error']
                 status_code = 404
+                logger.error(f"GitHub API error during aggregation for {normalized_username}: {error_response}")
             else:
                 # else, return with status code 500
-                logger.error(f"Error during aggregation: {aggregated_data['error']}")
+                logger.error(f"Error during aggregation for {normalized_username}: {aggregated_data['error']} from IP: {request.remote_addr}")
                 error_response = {'error': aggregated_data['error']}
                 status_code = 500
                 
@@ -104,7 +108,7 @@ def analyze_user_post():
         
         # Calculate impact score
         impact_score = analysis_service.calculate_impact_score(aggregated_data)
-        logger.debug(f"Impact score calculated for {normalized_username}: {impact_score}")
+        logger.debug(f"Impact score calculated for {normalized_username}: {impact_score} from IP: {request.remote_addr}")
 
         # Prepare final result
         result = {
@@ -127,16 +131,16 @@ def analyze_user_post():
             # Add analysis ID to the result for reference
             result['id'] = analysis_id
             result['github_username'] = normalized_username
-            logger.info(f"Analysis stored with ID: {analysis_id}")
+            logger.info(f"Analysis stored with ID: {analysis_id} for {normalized_username}")
         else:
-            logger.warning("Analysis was not stored in the database")
+            logger.warning(f"Analysis was not stored in the database for {normalized_username}")
         
-        logger.info(f"Analysis complete for {normalized_username}, impact score: {impact_score}")
+        logger.info(f"Analysis complete for {normalized_username}, impact score: {impact_score}, from IP: {request.remote_addr}")
         return jsonify(result)
         
     except Exception as e:
-        logger.exception(f"Exception in analyze_user_post for {normalized_username}:")
-        error_response = {'error': 'An internal server error occurred'}
+        logger.exception(f"Exception in analyze_user_post for {normalized_username} from IP: {request.remote_addr}: {str(e)}")
+        error_response = {'error': 'Unable to analyze profile at this time'}
         
         # Track failed analysis attempt
         try:
@@ -150,7 +154,7 @@ def analyze_user_post():
                 }
             )
         except Exception as track_err:
-            logger.error(f"Failed to track analysis error: {track_err}")
+            logger.error(f"Failed to track analysis error for {normalized_username}: {track_err}")
             
         return jsonify(error_response), 500
 
@@ -160,7 +164,7 @@ def analyze_user(username):
     
     Accepts username as a URL parameter and optional email as a query param.
     """
-    logger.info(f"Analyzing user input: {username}")  # Log the original input
+    logger.info(f"Analyzing user input: {username} from IP: {request.remote_addr}")  # Log the original input
     
     # Get optional email from query param
     email = request.args.get('email')
@@ -169,8 +173,8 @@ def analyze_user(username):
     normalized_username = normalize_github_username(username)
     
     if not normalized_username:
-        logger.error(f"Invalid GitHub username format: {username}")
-        error_response = {'error': 'Invalid GitHub username format'}
+        logger.error(f"Invalid GitHub username format: {username} from IP: {request.remote_addr}")
+        error_response = {'error': 'Invalid username format'}
         
         # Track failed analysis attempt due to invalid format
         store_analysis_result(

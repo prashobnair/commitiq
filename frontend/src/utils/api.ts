@@ -36,27 +36,27 @@ export const analyzeGitHubProfile = async (
       
       if (statusCode === 400) {
         return { 
-          error: responseData?.error || 'Invalid GitHub username format. Please try a different format.'
+          error: 'Invalid username format. Please try again.'
         };
       } else if (statusCode === 404) {
         return { 
-          error: 'GitHub user not found. Please check the username and try again.'
+          error: 'Username not found. Please check and try again.'
         };
       } else if (statusCode === 403) {
         return { 
-          error: 'Rate limit exceeded. Please try again later.'
+          error: 'Too many requests. Please try again later.'
         };
       } else {
         return {
-          error: responseData?.error || 'Failed to analyze GitHub profile'
+          error: 'Unable to analyze profile at this time. Please try again later.'
         };
       }
     } else if (error.request) {
       // The request was made but no response was received
-      return { error: 'No response from server. Please check your internet connection and try again.' };
+      return { error: 'Connection issue. Please check your internet and try again.' };
     } else {
       // Something happened in setting up the request
-      return { error: 'An unexpected error occurred. Please try again.' };
+      return { error: 'An unexpected issue occurred. Please try again.' };
     }
   }
 };

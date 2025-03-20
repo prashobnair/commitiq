@@ -62,7 +62,7 @@ class GitHubAPIService:
             
             if remaining < 10:
                 reset_datetime = datetime.fromtimestamp(reset_time)
-                logger.warning(f"GitHub API rate limit low: {remaining} remaining, resets at {reset_datetime}")
+                logger.warning(f"GitHub API rate limit low: {remaining} remaining, resets at {reset_datetime} for endpoint {endpoint}")
             
             # Handle rate limiting
             if response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
@@ -71,25 +71,29 @@ class GitHubAPIService:
                 wait_time = (reset_datetime - now).total_seconds() + 10  # Add buffer
                 
                 error_msg = f"GitHub API rate limit exceeded. Resets in {wait_time:.0f} seconds."
-                logger.error(error_msg)
-                return {"error": error_msg}
+                logger.error(f"{error_msg} - Endpoint: {endpoint} - Params: {params}")
+                return {"error": "Rate limit reached. Please try again later."}
             
             if response.status_code == 404:
-                logger.warning(f"GitHub resource not found: {url}")
-                return {"error": "GitHub user or resource not found"}
+                logger.warning(f"GitHub resource not found: {url} - Endpoint: {endpoint} - Params: {params}")
+                return {"error": "Username not found"}
+            
+            # Log all non-2xx responses with more context
+            if response.status_code < 200 or response.status_code >= 300:
+                logger.error(f"GitHub API non-2xx response: {response.status_code} - URL: {url} - Response: {response.text[:500]}")
             
             response.raise_for_status()
             return response.json()
             
         except requests.exceptions.HTTPError as e:
-            logger.error(f"GitHub API HTTP error: {str(e)}")
-            return {"error": f"GitHub API error: {str(e)}"}
+            logger.error(f"GitHub API HTTP error: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Unable to access profile data"}
         except (ConnectionError, Timeout) as e:
-            logger.error(f"GitHub API connection error: {str(e)}")
-            raise  # Let retry handle this
+            logger.error(f"GitHub API connection error: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Connection issue. Please try again"}
         except Exception as e:
-            logger.exception(f"Unexpected error in GitHub API request: {str(e)}")
-            return {"error": f"Failed to fetch data from GitHub: {str(e)}"}
+            logger.exception(f"Unexpected error in GitHub API request: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Unable to analyze profile at this time"}
     
     @staticmethod
     @retry(
@@ -111,7 +115,10 @@ class GitHubAPIService:
         if variables is None:
             variables = {}
             
-        logger.debug(f"Making GitHub GraphQL request with variables: {variables}")
+        # Log a sanitized version of the query (first 200 chars)
+        sanitized_query = query.replace('\n', ' ').replace('  ', ' ')[:200] + '...' if len(query) > 200 else query
+        logger.debug(f"Making GitHub GraphQL request: {sanitized_query}")
+        logger.debug(f"Variables: {variables}")
         
         try:
             response = requests.post(
@@ -136,8 +143,12 @@ class GitHubAPIService:
                 wait_time = (reset_datetime - now).total_seconds() + 10  # Add buffer
                 
                 error_msg = f"GitHub GraphQL API rate limit exceeded. Resets in {wait_time:.0f} seconds."
-                logger.error(error_msg)
-                return {"errors": [{"message": error_msg}]}
+                logger.error(f"{error_msg} - Variables: {variables}")
+                return {"errors": [{"message": "Rate limit reached. Please try again later."}]}
+            
+            # Log all non-2xx responses
+            if response.status_code < 200 or response.status_code >= 300:
+                logger.error(f"GitHub GraphQL API non-2xx response: {response.status_code} - Response: {response.text[:500]}")
             
             response.raise_for_status()
             data = response.json()
@@ -145,20 +156,30 @@ class GitHubAPIService:
             # Check for GraphQL errors
             if "errors" in data:
                 error_msg = data["errors"][0]["message"]
-                logger.error(f"GitHub GraphQL error: {error_msg}")
-                return data  # Return the original error response
+                logger.error(f"GitHub GraphQL error: {error_msg} - Variables: {variables} - Query: {sanitized_query}")
+                
+                # Map common errors to user-friendly messages
+                if "Could not resolve to a User" in error_msg:
+                    logger.error(f"User not found in GitHub - Variables: {variables}")
+                    data["errors"][0]["message"] = "Username not found"
+                elif "API rate limit exceeded" in error_msg:
+                    data["errors"][0]["message"] = "Rate limit reached. Please try again later"
+                else:
+                    data["errors"][0]["message"] = "Unable to analyze profile at this time"
+                
+                return data  # Return the modified error response
                 
             return data
             
         except requests.exceptions.HTTPError as e:
-            logger.error(f"GitHub GraphQL API HTTP error: {str(e)}")
-            return {"errors": [{"message": f"GitHub API error: {str(e)}"}]}
+            logger.error(f"GitHub GraphQL API HTTP error: {str(e)} - Variables: {variables}")
+            return {"errors": [{"message": "Unable to access profile data"}]}
         except (ConnectionError, Timeout) as e:
-            logger.error(f"GitHub GraphQL API connection error: {str(e)}")
-            raise  # Let retry handle this
+            logger.error(f"GitHub GraphQL API connection error: {str(e)} - Variables: {variables}")
+            return {"errors": [{"message": "Connection issue. Please try again"}]}
         except Exception as e:
-            logger.exception(f"Unexpected error in GitHub GraphQL API request: {str(e)}")
-            return {"errors": [{"message": f"Failed to fetch data from GitHub: {str(e)}"}]}
+            logger.exception(f"Unexpected error in GitHub GraphQL API request: {str(e)} - Variables: {variables}")
+            return {"errors": [{"message": "Unable to analyze profile at this time"}]}
     
     @staticmethod
     async def async_github_request(session, endpoint, params=None):
@@ -183,7 +204,7 @@ class GitHubAPIService:
                 
                 if remaining < 10:
                     reset_datetime = datetime.fromtimestamp(reset_time)
-                    logger.warning(f"GitHub API rate limit low: {remaining} remaining, resets at {reset_datetime}")
+                    logger.warning(f"GitHub API rate limit low: {remaining} remaining, resets at {reset_datetime} - Endpoint: {endpoint}")
                 
                 # Handle rate limiting
                 if response.status == 403 and 'rate limit exceeded' in await response.text():
@@ -192,25 +213,30 @@ class GitHubAPIService:
                     wait_time = (reset_datetime - now).total_seconds() + 10  # Add buffer
                     
                     error_msg = f"GitHub API rate limit exceeded. Resets in {wait_time:.0f} seconds."
-                    logger.error(error_msg)
-                    return {"error": error_msg}
+                    logger.error(f"{error_msg} - Endpoint: {endpoint} - Params: {params}")
+                    return {"error": "Rate limit reached. Please try again later."}
                 
                 if response.status == 404:
-                    logger.warning(f"GitHub resource not found: {url}")
-                    return {"error": "GitHub user or resource not found"}
+                    logger.warning(f"GitHub resource not found: {url} - Endpoint: {endpoint} - Params: {params}")
+                    return {"error": "Username not found"}
+                
+                # Log all non-2xx responses
+                if response.status < 200 or response.status >= 300:
+                    response_text = await response.text()
+                    logger.error(f"GitHub API non-2xx response: {response.status} - URL: {url} - Response: {response_text[:500]}")
                 
                 response.raise_for_status()
                 return await response.json()
                 
         except aiohttp.ClientResponseError as e:
-            logger.error(f"GitHub API HTTP error: {str(e)}")
-            return {"error": f"GitHub API error: {str(e)}"}
+            logger.error(f"GitHub API HTTP error: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Unable to access profile data"}
         except aiohttp.ClientConnectionError as e:
-            logger.error(f"GitHub API connection error: {str(e)}")
-            return {"error": f"GitHub API connection error: {str(e)}"}
+            logger.error(f"GitHub API connection error: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Connection issue. Please try again"}
         except Exception as e:
-            logger.exception(f"Unexpected error in async GitHub API request: {str(e)}")
-            return {"error": f"Failed to fetch data from GitHub: {str(e)}"}
+            logger.exception(f"Unexpected error in async GitHub API request: {str(e)} - Endpoint: {endpoint} - Params: {params}")
+            return {"error": "Unable to analyze profile at this time"}
     
     @staticmethod
     async def fetch_multiple_endpoints(endpoints, params_list=None):
@@ -508,12 +534,12 @@ class GitHubAPIService:
             if 'errors' in graphql_response:
                 error_msg = graphql_response['errors'][0]['message']
                 
-            logger.error(f"Error fetching GitHub data: {error_msg}")
-            return {'error': error_msg}
+            logger.error(f"Error fetching GitHub data: {error_msg} - Username: {username} - Response structure: {list(graphql_response.keys())}")
+            return {'error': "Unable to analyze profile at this time"}
             
         except Exception as e:
-            logger.exception(f"Error in GraphQL data fetching: {str(e)}")
-            return {'error': f"Error in data fetching: {str(e)}"}
+            logger.exception(f"Error in GraphQL data fetching: {str(e)} - Username: {username}")
+            return {'error': "Unable to analyze profile at this time"}
 
 # Create a singleton instance
 github_api = GitHubAPIService() 
