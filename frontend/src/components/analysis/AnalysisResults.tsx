@@ -36,14 +36,17 @@ import {
   Code as CodeIcon,
   ArrowBack,
   ExpandMore,
+  Home as HomeIcon,
 } from '@mui/icons-material';
 import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../types/analysis';
 import ShareOptions from './ShareOptions';
 import { useAnalysisContext } from '../../contexts/AnalysisContext';
+import { Link as RouterLink } from 'react-router-dom';
 
 interface Props {
   data: AnalysisResponse;
   onJoinWaitingList?: () => void;
+  isSharedView?: boolean;
 }
 
 // Helper function to determine rating based on value
@@ -250,7 +253,7 @@ const mapRepositories = (repoData: any[]): Repository[] => {
   });
 };
 
-const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
+const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedView = false }) => {
   const theme = useTheme();
   const { resetAnalysis } = useAnalysisContext();
   // Single state to track expanded accordion
@@ -419,17 +422,29 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList }) => {
   return (
     <Box sx={{ py: 4 }}>
       <Grid container spacing={3} display="flex" flexDirection={{ xs: 'column', md: 'row' }}>
-        {/* Back to Search Button */}
+        {/* Back Button */}
         <Grid item xs={12}>
-          <Button
-            variant="outlined"
-            color="primary"
-            onClick={resetAnalysis}
-            startIcon={<ArrowBack />}
-            sx={{ mb: 3 }}
-          >
-            Back to Search
-          </Button>
+          {isSharedView ? (
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<HomeIcon />}
+              sx={{ mb: 3 }}
+              onClick={() => window.location.href = '/'}
+            >
+              Return to Home
+            </Button>
+          ) : (
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={resetAnalysis}
+              startIcon={<ArrowBack />}
+              sx={{ mb: 3 }}
+            >
+              Back to Search
+            </Button>
+          )}
         </Grid>
         
         {/* Developer Profile Header */}

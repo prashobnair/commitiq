@@ -71,7 +71,7 @@ const SharedAnalysisView: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 8 }}>
-      <AnalysisResults data={analysisData} />
+      <AnalysisResults data={analysisData} isSharedView={true} />
     </Container>
   );
 };
