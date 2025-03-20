@@ -4,11 +4,35 @@ from ..utils.analysis_service import analysis_service
 from ..utils import normalize_github_username
 from .analysis_tracking import store_analysis_result
 import logging
+import threading
+import time
 
 # Get module logger
 logger = logging.getLogger(__name__)
 
 analysis_bp = Blueprint('analysis', __name__)
+
+def _async_store_analysis(github_username, analysis_result, analyzer_email=None, request_info=None):
+    """
+    Asynchronous wrapper for storing analysis results in the database.
+    
+    This function runs in a background thread to prevent blocking the main response.
+    Any exceptions are caught and logged, preventing impact on the user experience.
+    """
+    try:
+        analysis_id = store_analysis_result(
+            github_username=github_username,
+            analysis_result=analysis_result,
+            analyzer_email=analyzer_email,
+            request_info=request_info
+        )
+        
+        if analysis_id:
+            logger.info(f"Analysis stored asynchronously with ID: {analysis_id} for {github_username}")
+        else:
+            logger.warning(f"Async analysis storage failed for {github_username}")
+    except Exception as e:
+        logger.exception(f"Async analysis storage error for {github_username}: {str(e)}")
 
 @analysis_bp.route('/analyze', methods=['POST'])
 def analyze_user_post():
@@ -34,7 +58,8 @@ def analyze_user_post():
         logger.error(f"Invalid GitHub username format: {username} from IP: {request.remote_addr}")
         error_response = {'error': 'Invalid username format'}
         
-        # Track failed analysis attempt due to invalid format
+        # Track failed analysis attempt due to invalid format - still synchronous for errors
+        # since these are fast operations and error tracking is important
         store_analysis_result(
             github_username=username,
             analysis_result=error_response,
@@ -62,7 +87,7 @@ def analyze_user_post():
             logger.error(f"Error during github data fetching for {normalized_username}: {github_data['error']} from IP: {request.remote_addr}")
             error_response = {'error': github_data['error']}
             
-            # Track failed analysis attempt
+            # Track failed analysis attempt - still synchronous for errors
             store_analysis_result(
                 github_username=normalized_username,
                 analysis_result=error_response,
@@ -93,7 +118,7 @@ def analyze_user_post():
                 error_response = {'error': aggregated_data['error']}
                 status_code = 500
                 
-            # Track failed analysis attempt
+            # Track failed analysis attempt - still synchronous for errors
             store_analysis_result(
                 github_username=normalized_username,
                 analysis_result=error_response,
@@ -113,27 +138,25 @@ def analyze_user_post():
         # Prepare final result
         result = {
             'impact_score': impact_score,
-            'analysis': aggregated_data
+            'analysis': aggregated_data,
+            'github_username': normalized_username
         }
         
-        # Track successful analysis
-        analysis_id = store_analysis_result(
-            github_username=normalized_username,
-            analysis_result=result,
-            analyzer_email=email,
-            request_info={
+        # Generate a placeholder ID to use until the real one is saved in the database
+        # This allows the frontend to reference the analysis while the database operation completes asynchronously
+        placeholder_id = hash(f"{normalized_username}:{int(time.time())}")
+        result['id'] = placeholder_id
+        
+        # Start a background thread to store the analysis result
+        # This prevents blocking the response while database operations complete
+        threading.Thread(
+            target=_async_store_analysis,
+            args=(normalized_username, result, email, {
                 'ip': request.remote_addr,
                 'user_agent': request.headers.get('User-Agent')
-            }
-        )
-        
-        if analysis_id:
-            # Add analysis ID to the result for reference
-            result['id'] = analysis_id
-            result['github_username'] = normalized_username
-            logger.info(f"Analysis stored with ID: {analysis_id} for {normalized_username}")
-        else:
-            logger.warning(f"Analysis was not stored in the database for {normalized_username}")
+            }),
+            daemon=True
+        ).start()
         
         logger.info(f"Analysis complete for {normalized_username}, impact score: {impact_score}, from IP: {request.remote_addr}")
         return jsonify(result)
@@ -142,7 +165,7 @@ def analyze_user_post():
         logger.exception(f"Exception in analyze_user_post for {normalized_username} from IP: {request.remote_addr}: {str(e)}")
         error_response = {'error': 'Unable to analyze profile at this time'}
         
-        # Track failed analysis attempt
+        # Track failed analysis attempt - still synchronous for errors
         try:
             store_analysis_result(
                 github_username=normalized_username,

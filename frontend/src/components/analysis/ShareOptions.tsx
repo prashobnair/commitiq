@@ -53,8 +53,9 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   };
   
   const handleDownload = () => {
-    // Open the PDF download URL in a new tab
-    window.open(`${API_BASE_URL}/download/report/${analysisId}?format=pdf&username=${encodeURIComponent(githubUsername)}`, '_blank');
+    // Use username-based approach instead of analysis ID to handle placeholder IDs
+    // This ensures downloads work even if the analysis hasn't been fully stored in the database yet
+    window.open(`${API_BASE_URL}/download/report?username=${encodeURIComponent(githubUsername)}&format=pdf`, '_blank');
   };
   
   const handleCopyToClipboard = () => {

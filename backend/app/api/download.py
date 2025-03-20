@@ -41,6 +41,55 @@ def get_db_connection():
         logger.error(f"Database connection error: {e}")
         raise
 
+@download_bp.route('/report', methods=['GET'])
+def download_report_by_username():
+    """
+    Generate and download a report for a GitHub analysis based on username.
+    This endpoint is more resilient as it doesn't require a specific analysis ID,
+    allowing it to work even if database operations are asynchronous.
+    """
+    username = request.args.get('username')
+    format_type = request.args.get('format', 'pdf').lower()
+    
+    if not username:
+        return jsonify({'error': 'Username parameter is required'}), 400
+        
+    if format_type not in ['pdf', 'json']:
+        return jsonify({'error': 'Unsupported format. Use "pdf" or "json"'}), 400
+    
+    conn = None
+    try:
+        # Get the analysis data by username (most recent)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get the most recent analysis for this username
+        cur.execute('''
+        SELECT a.*, d.full_analysis_data
+        FROM github_analysis a
+        LEFT JOIN github_analysis_details d ON a.id = d.analysis_id
+        WHERE a.github_username = %s AND a.is_successful = true
+        ORDER BY a.analyzed_at DESC
+        LIMIT 1
+        ''', (username,))
+        
+        analysis = cur.fetchone()
+        
+        if not analysis:
+            # If no data in database yet (could be due to async storage),
+            # return a simple error message suggesting to try again later
+            return jsonify({'error': 'Analysis data not available yet. Please try again in a few moments.'}), 404
+        
+        # Use the existing download_report function logic by calling it with the found analysis ID
+        return download_report(analysis['id'])
+        
+    except Exception as e:
+        logger.error(f"Error looking up analysis by username: {e}")
+        return jsonify({'error': f'Failed to generate report: {str(e)}'}), 500
+    finally:
+        if conn:
+            conn.close()
+
 @download_bp.route('/report/<int:analysis_id>', methods=['GET'])
 def download_report(analysis_id):
     """Generate and download a report for a GitHub analysis in PDF or JSON format."""
