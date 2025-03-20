@@ -382,7 +382,7 @@ const mapRepositories = (repoData: any[]): Repository[] => {
       commit_frequency: repo.commit_frequency || 'N/A',
       last_updated: lastUpdated,
       num_commits: contributionRatio,
-      impact_score: repo.impact_score || repo.repo_impact || 0
+      impact_score: repo.impact_score || repo.impactScore || repo.repo_impact || 0
     };
   });
 };

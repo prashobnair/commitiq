@@ -260,6 +260,32 @@ const LandingPage: React.FC = () => {
                   </Button>
                 </Paper>
                 
+                {/* 
+                  Option 1: Custom styled FormHelperText - uncomment to use this version
+                  
+                {error && (
+                  <FormHelperText 
+                    error 
+                    sx={{ 
+                      mx: 0.5, 
+                      mt: 1, 
+                      fontSize: '0.95rem',
+                      fontWeight: 500,
+                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                      color: '#d32f2f', // Using custom color instead of 'error.main' for better contrast
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid #ff3333',
+                      display: 'inline-flex',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <ErrorOutline sx={{ fontSize: '1rem', mr: 0.8 }} />
+                    {error}
+                  </FormHelperText>
+                )}
+                */}
+                
                 {/* Option 2: Alert component - current implementation */}
                 {error && (
                   <Alert 
@@ -447,7 +473,7 @@ const LandingPage: React.FC = () => {
                             Developer Summary
                           </Typography>
                           <Typography variant="body2" sx={{ display: 'block', mt: 1, mb: 1, fontSize: '0.8rem' }}>
-                            John has made 356 commits and 87 PRs with 42 code reviews, showing strong collaboration and consistent activity.
+                          John demonstrates a highly collaborative approach, actively contributing to team projects
                           </Typography>
                           
                           <Box sx={{ 
@@ -464,7 +490,7 @@ const LandingPage: React.FC = () => {
                               
                               <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
                                 <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'success.main', mr: 1.5, flexShrink: 0 }} />
-                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Excellent consistency (76.2% active days)</Typography>
+                                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>Exceptional consistency in development activity, suggesting strong reliability</Typography>
                               </Box>
                             </Box>
                             
