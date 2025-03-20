@@ -441,8 +441,6 @@ def download_report(analysis_id):
                 lang_percentage = 0
                 if 'percentage' in lang:
                     lang_percentage = lang['percentage']
-                    if lang_percentage <= 1:
-                        lang_percentage *= 100
                 elif 'percent' in lang:
                     lang_percentage = lang['percent']
                     if lang_percentage <= 1:

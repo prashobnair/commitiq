@@ -421,7 +421,7 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
   let topLanguages: Array<{ language: string; percentage: number }> = [];
   
   if (contributions.top_languages && Array.isArray(contributions.top_languages)) {
-    console.log("Found top_languages in contributions:", contributions.top_languages);
+    console.log("Raw top_languages data:", contributions.top_languages);
     
     // Map the languages to a consistent format
     topLanguages = contributions.top_languages.map((lang: any) => {
@@ -433,19 +433,26 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
         // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
         let percentage = 0;
         if (typeof lang.percentage === 'number') {
-          percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+          // For anshphirani's case, the percentages are already correct (99 and 1)
+          // So we should not modify them if they sum close to 100
+          percentage = lang.percentage;
         } else if (typeof lang.percent === 'number') {
-          percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+          percentage = lang.percent;
         }
+        
+        console.log(`Processing language ${languageName}: raw percentage = ${percentage}`);
         
         return {
           language: languageName,
-          percentage: percentage / 100 // Store as decimal for consistent handling
+          percentage: percentage
         };
       }
       // Default case for any other format
       return { language: 'Unknown', percentage: 0 };
     });
+
+    // Log the final processed languages
+    console.log("Final processed languages:", topLanguages);
   } else {
     // Try to find languages data in other locations
     try {
@@ -461,16 +468,20 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
           // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
           let percentage = 0;
           if (typeof lang.percentage === 'number') {
-            percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+            percentage = lang.percentage;
           } else if (typeof lang.percent === 'number') {
-            percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+            percentage = lang.percent;
           }
+          
+          console.log(`Processing language from metrics ${languageName}: raw percentage = ${percentage}`);
           
           return {
             language: languageName,
-            percentage: percentage / 100 // Store as decimal for consistent handling
+            percentage: percentage
           };
         });
+        
+        console.log("Final processed languages from metrics:", topLanguages);
       }
     } catch (error) {
       console.error("Error processing languages data:", error);
@@ -689,18 +700,21 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
                       Top Languages
                     </Typography>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {topLanguages.map((lang, index) => (
-                        <Chip
-                          key={index}
-                          label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
-                          size="small"
-                          sx={{
-                            bgcolor: `${theme.palette.primary.main}15`,
-                            color: theme.palette.primary.main,
-                            my: 0.5
-                          }}
-                        />
-                      ))}
+                      {topLanguages.map((lang, index) => {
+                        console.log(`Rendering language ${lang.language} with percentage ${lang.percentage}`);
+                        return (
+                          <Chip
+                            key={index}
+                            label={`${lang.language}: ${lang.percentage.toFixed(1)}%`}
+                            size="small"
+                            sx={{
+                              bgcolor: `${theme.palette.primary.main}15`,
+                              color: theme.palette.primary.main,
+                              my: 0.5
+                            }}
+                          />
+                        );
+                      })}
                     </Box>
                   </CardContent>
                 </Card>
