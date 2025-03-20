@@ -77,6 +77,29 @@ def analyze_user_post():
         logger.info(f"Normalized username: {username} -> {normalized_username}")
     
     try:
+        # Check for cached full analysis result first
+        cached_result = analysis_service.get_cached_analysis_result(normalized_username)
+        if cached_result:
+            logger.info(f"Using cached analysis result for {normalized_username}")
+            
+            # Start a background thread to store the analysis result if it wasn't already
+            # This ensures we're still tracking usage even when serving from cache
+            if 'id' not in cached_result or not cached_result.get('id'):
+                # Generate a placeholder ID if one doesn't exist
+                placeholder_id = hash(f"{normalized_username}:{int(time.time())}")
+                cached_result['id'] = placeholder_id
+                
+                threading.Thread(
+                    target=_async_store_analysis,
+                    args=(normalized_username, cached_result, email, {
+                        'ip': request.remote_addr,
+                        'user_agent': request.headers.get('User-Agent')
+                    }),
+                    daemon=True
+                ).start()
+            
+            return jsonify(cached_result)
+            
         # Use the analysis service to fetch and process data
         logger.info(f"Fetching GitHub data for {normalized_username}")
         github_data = analysis_service.fetch_all_data(normalized_username)
@@ -146,6 +169,9 @@ def analyze_user_post():
         # This allows the frontend to reference the analysis while the database operation completes asynchronously
         placeholder_id = hash(f"{normalized_username}:{int(time.time())}")
         result['id'] = placeholder_id
+        
+        # Cache the full analysis result for reuse
+        analysis_service.cache_analysis_result(normalized_username, result)
         
         # Start a background thread to store the analysis result
         # This prevents blocking the response while database operations complete

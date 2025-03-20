@@ -3,7 +3,7 @@ import math
 import numpy as np
 from datetime import datetime, timedelta
 from .github_api import github_api
-from .cache_service import cache_response
+from .cache_service import cache_response, cache_service
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -614,6 +614,65 @@ class AnalysisService:
         
         # If not, return a default of 0
         return 0
+
+    def cache_analysis_result(self, username, result, ttl=3600):
+        """
+        Cache the final analysis result for quick retrieval.
+        
+        This avoids recomputing the entire analysis for repeated lookups of the
+        same username within the TTL period. The cache key is specific to the username
+        and independent from the lower-level caching of GitHub API data and aggregation.
+        
+        Args:
+            username (str): GitHub username
+            result (dict): Complete analysis result with impact score
+            ttl (int): Time-to-live for cache in seconds. Default 1 hour.
+            
+        Returns:
+            bool: True if successfully cached
+        """
+        if not username or not result:
+            return False
+            
+        try:
+            # Create a cache key specific to this operation and username
+            cache_key = f"analysis_result:{username}"
+            
+            # Store in cache
+            cache_service.set(cache_key, result, ttl)
+            logger.info(f"Cached complete analysis result for {username} with TTL {ttl}s")
+            return True
+        except Exception as e:
+            logger.error(f"Error caching analysis result for {username}: {str(e)}")
+            return False
+    
+    def get_cached_analysis_result(self, username):
+        """
+        Retrieve a cached analysis result for a username if available.
+        
+        Args:
+            username (str): GitHub username
+            
+        Returns:
+            dict|None: The cached analysis result or None if not found/expired
+        """
+        if not username:
+            return None
+            
+        try:
+            # Get from cache using the same key format as in cache_analysis_result
+            cache_key = f"analysis_result:{username}"
+            result = cache_service.get(cache_key)
+            
+            if result:
+                logger.info(f"Retrieved cached analysis result for {username}")
+            else:
+                logger.debug(f"No cached analysis result found for {username}")
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving cached analysis result for {username}: {str(e)}")
+            return None
 
 # Create a singleton instance
 analysis_service = AnalysisService() 
