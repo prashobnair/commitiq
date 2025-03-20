@@ -25,9 +25,8 @@ const TopLanguages: React.FC<TopLanguagesProps> = ({ languages }) => {
     let percentage = 0;
     if ('percentage' in lang && lang.percentage !== undefined) {
       percentage = lang.percentage;
-      if (percentage <= 1) {
-        percentage *= 100;
-      }
+      // Only apply multiplier for decimal percentages less than 1
+      // For AnshPhirani case, percentage was already 99, so we shouldn't multiply
     } else if ('percent' in lang && lang.percent !== undefined) {
       percentage = lang.percent;
       if (percentage <= 1) {

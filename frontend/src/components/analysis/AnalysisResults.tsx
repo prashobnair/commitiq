@@ -126,15 +126,74 @@ const generateSummary = (data: AnalysisResponse): string => {
   const commits = contributions.commits;
   const consistency = contributions.consistency;
   const reviews = contributions.reviews;
+  const repos_impact = contributions.repos_impact;
   
   // Get developer name or username
   const developerName = data.analysis.name || data.analysis.username;
   
-  const prRating = getRating(pulls, 'prs');
-  const commitRating = getRating(commits, 'commits');
-  const consistencyRating = getRating(consistency, 'consistency');
+  // Determine primary language focus if available
+  let languageFocus = "";
+  if (contributions.top_languages && contributions.top_languages.length > 0) {
+    const topLang = contributions.top_languages[0];
+    const langName = typeof topLang === 'object' && topLang !== null ? topLang.language : '';
+    if (langName) {
+      languageFocus = ` with particular focus on ${langName} development`;
+    }
+  }
   
-  return `${developerName} has made ${commits} commits and ${pulls} pull requests, showing ${prRating.label.toLowerCase()} collaboration. Their consistency is ${(consistency * 100).toFixed(1)}%, indicating ${consistencyRating.label.toLowerCase()} regular activity. With ${reviews} code reviews, they actively engage in code discussions. Overall, they're a ${commitRating.label.toLowerCase()} contributor who ${pulls > 30 ? 'frequently' : 'occasionally'} participates in various projects.`;
+  // Create a list of key insights, prioritized by importance
+  const insights: string[] = [];
+  
+  // Collaboration style (highest priority)
+  if (pulls > 30 && reviews > 20) {
+    insights.push(`${developerName} demonstrates a highly collaborative approach, actively contributing to team projects and providing thoughtful feedback${languageFocus}`);
+  } else if (pulls > 15 && reviews > 10) {
+    insights.push(`${developerName} shows good team collaboration skills, regularly contributing to shared codebases${languageFocus}`);
+  } else if (commits > 100 && (pulls < 10 || reviews < 5)) {
+    insights.push(`${developerName} tends to focus on independent development, with strong contribution volume but less emphasis on collaborative workflows${languageFocus}`);
+  } else {
+    insights.push(`${developerName} balances independent work with team collaboration${languageFocus}`);
+  }
+  
+  // Consistency and reliability (medium priority)
+  if (consistency > 0.8) {
+    insights.push("Their highly consistent activity pattern indicates strong reliability and sustained engagement over time");
+  } else if (consistency > 0.6) {
+    insights.push("They maintain good consistency in their development work, suggesting reliable engagement");
+  } else if (consistency > 0.4) {
+    insights.push("Their moderate consistency suggests periodic focused engagement rather than continuous development");
+  } else if (commits > 50) {
+    insights.push("Their engagement pattern shows variability, potentially indicating project-based work rather than ongoing maintenance");
+  }
+  
+  // Code quality focus (medium priority)
+  if (reviews > commits * 0.3) {
+    insights.push("Their significant focus on code reviews demonstrates a commitment to code quality and mentorship");
+  } else if (reviews > commits * 0.1) {
+    insights.push("They regularly participate in code reviews, showing attention to quality and collaborative improvement");
+  } else if (reviews > 10) {
+    insights.push("They occasionally engage in code review processes, providing some quality oversight");
+  }
+  
+  // Project impact (lower priority)
+  if (repos_impact > 0.05) {
+    insights.push("Their contributions demonstrate significant impact across repositories, suggesting influence on important projects");
+  } else if (repos_impact > 0.02 && commits > 50) {
+    insights.push("They show meaningful impact on the repositories they contribute to");
+  }
+  
+  // Limit to the most important 3 insights (at most 4 if they're short)
+  let summaryText = "";
+  const maxSentences = 4;
+  let sentenceCount = 0;
+  
+  for (let i = 0; i < insights.length && sentenceCount < maxSentences; i++) {
+    if (summaryText) summaryText += " ";
+    summaryText += insights[i] + ".";
+    sentenceCount++;
+  }
+  
+  return summaryText;
 };
 
 // Helper function to determine overall rating
@@ -156,49 +215,114 @@ const getStrengthsAndConsiderations = (data: AnalysisResponse): { strengths: str
   const consistency = contributions.consistency;
   const reviews = contributions.reviews;
   const repos_impact = contributions.repos_impact;
+  const topLanguages = contributions.top_languages || [];
+  const topRepos = contributions.top_repositories || [];
   
-  const strengths: string[] = [];
-  const considerations: string[] = [];
+  const allStrengths: string[] = [];
+  const allConsiderations: string[] = [];
   
-  // Analyze strengths
-  if (pulls > 30) {
-    strengths.push('High number of pull requests, indicating strong collaboration');
+  // Analyze collaboration patterns
+  if (pulls > 30 && commits > 100) {
+    allStrengths.push('Strong balance of code contribution and collaborative development through pull requests');
+  } else if (pulls > 20) {
+    allStrengths.push('Demonstrates effective collaborative workflow through regular pull request contributions');
+  } else if (commits > 200 && pulls > 10) {
+    allStrengths.push('High volume of code contributions with moderate collaborative engagement');
   }
   
-  if (consistency > 0.7) {
-    strengths.push(`Excellent consistency (${(consistency * 100).toFixed(1)}% active days)`);
+  // Analyze consistency patterns
+  if (consistency > 0.8) {
+    allStrengths.push('Exceptional consistency in development activity, suggesting strong reliability and sustained engagement');
+  } else if (consistency > 0.6) {
+    allStrengths.push('Maintains good consistency in development work, indicating reliable contribution patterns');
+  } else if (consistency < 0.4 && commits > 100) {
+    allConsiderations.push('Contributions tend to be concentrated in intense periods rather than consistent engagement');
   }
   
-  if (reviews > 20) {
-    strengths.push('Frequent code reviews, showing willingness to provide feedback');
+  // Analyze code quality focus
+  if (reviews > 30) {
+    allStrengths.push('Strong commitment to code quality through frequent and detailed code reviews');
+  } else if (reviews > 15) {
+    allStrengths.push('Regular participation in code review processes, demonstrating attention to quality');
+  } else if (commits > 100 && reviews < 5) {
+    allConsiderations.push('Limited engagement in code review processes compared to contribution volume');
   }
   
-  if (commits > 200) {
-    strengths.push('Significant number of commits, demonstrating active development');
+  // Analyze specialization and focus areas
+  if (topLanguages && topLanguages.length > 0) {
+    const topLang = topLanguages[0];
+    const langName = typeof topLang === 'object' && topLang !== null ? topLang.language : '';
+    if (langName) {
+      allStrengths.push(`Demonstrates strong specialization in ${langName} development`);
+    }
+    
+    // Check for language diversity
+    if (topLanguages.length >= 3) {
+      allStrengths.push('Versatile across multiple programming languages, suggesting adaptability to different technical requirements');
+    }
+  } else {
+    allConsiderations.push('Limited data on language specialization, making it difficult to assess technical focus areas');
   }
   
-  // Analyze considerations
-  if (repos_impact < 0.03) {
-    considerations.push('Lower repository impact score—contributions may be in less popular repos');
+  // Analyze project impact
+  if (repos_impact > 0.05) {
+    allStrengths.push('Significant impact on project repositories, suggesting meaningful contributions to important codebases');
+  } else if (repos_impact < 0.02 && commits > 100) {
+    allConsiderations.push('Contributions may be spread across many repositories or focused on less central codebases');
   }
   
-  if (pulls < 10 && commits > 100) {
-    considerations.push('High commits but low PRs may indicate solo work rather than collaboration');
-  }
-  
-  if (consistency < 0.5) {
-    considerations.push('Inconsistent contribution pattern may indicate sporadic engagement');
+  // Analyze repository contribution patterns
+  if (topRepos && topRepos.length > 0) {
+    const hasHighStarRepo = topRepos.some(repo => repo.stars > 100);
+    if (hasHighStarRepo) {
+      allStrengths.push('Experience contributing to popular, widely-used repositories');
+    }
+    
+    const hasHighImpactContributions = topRepos.some(repo => {
+      const impactScore = repo.impact_score || 0;
+      let contributionRatio = 0;
+      
+      // Try to parse contribution ratio from various possible formats
+      if (typeof repo.num_commits === 'string') {
+        const match = repo.num_commits.match(/(\d+(\.\d+)?)%/);
+        if (match) {
+          contributionRatio = parseFloat(match[1]);
+        }
+      }
+      
+      return impactScore > 0.05 || contributionRatio > 10;
+    });
+    
+    if (hasHighImpactContributions) {
+      allStrengths.push('Demonstrated ability to make significant contributions to individual projects');
+    }
   }
   
   // Ensure we have at least one strength
-  if (strengths.length === 0) {
-    strengths.push('Shows engagement with GitHub projects');
+  if (allStrengths.length === 0) {
+    if (commits > 0 || pulls > 0) {
+      allStrengths.push('Shows engagement with GitHub projects, demonstrating basic version control competence');
+    } else {
+      allStrengths.push('Has established a GitHub presence, though activity metrics are limited');
+    }
   }
   
-  // If no considerations, add a neutral one
-  if (considerations.length === 0) {
-    considerations.push('No significant concerns identified in the contribution pattern');
+  // If no considerations, add an appropriate one
+  if (allConsiderations.length === 0) {
+    if (consistency < 0.7 && consistency > 0.4) {
+      allConsiderations.push('Moderate consistency in development activity may indicate varying engagement levels over time');
+    } else if (pulls < 20 && reviews < 15 && pulls > 0) {
+      allConsiderations.push('Could benefit from increased engagement with collaborative development workflows');
+    } else if (commits < 50 && pulls < 10) {
+      allConsiderations.push('Limited volume of public GitHub activity, which may not fully represent technical capabilities');
+    } else {
+      allConsiderations.push('No significant concerns identified in the contribution pattern');
+    }
   }
+  
+  // Prioritize and limit strengths and considerations to 3 each
+  const strengths = allStrengths.slice(0, 3);
+  const considerations = allConsiderations.slice(0, 3);
   
   return { strengths, considerations };
 };
@@ -237,6 +361,16 @@ const mapRepositories = (repoData: any[]): Repository[] => {
       lastUpdated = formatDate(repo.last_commit_date);
     }
     
+    // Parse contribution ratio from various possible formats
+    let contributionRatio = '0%';
+    if (repo.contribution_ratio) {
+      contributionRatio = `${(repo.contribution_ratio * 100).toFixed(1)}%`;
+    } else if (typeof repo.contributionRatio === 'number') {
+      contributionRatio = `${repo.contributionRatio}%`;
+    } else if (typeof repo.contributionRatio === 'string') {
+      contributionRatio = repo.contributionRatio;
+    }
+    
     // Map the repository data to our component format
     return {
       name: repo.name || 'Unknown Repository',
@@ -247,8 +381,8 @@ const mapRepositories = (repoData: any[]): Repository[] => {
       primary_language: repo.primaryLanguage || repo.primary_language || 'N/A',
       commit_frequency: repo.commit_frequency || 'N/A',
       last_updated: lastUpdated,
-      num_commits: repo.contributionRatio ? `${repo.contributionRatio}%` : (repo.contribution_ratio ? `${(repo.contribution_ratio * 100).toFixed(1)}%` : '0%'),
-      impact_score: repo.impactScore || repo.repo_impact || 0
+      num_commits: contributionRatio,
+      impact_score: repo.impact_score || repo.repo_impact || 0
     };
   });
 };
@@ -287,7 +421,7 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
   let topLanguages: Array<{ language: string; percentage: number }> = [];
   
   if (contributions.top_languages && Array.isArray(contributions.top_languages)) {
-    console.log("Found top_languages in contributions:", contributions.top_languages);
+    console.log("Raw top_languages data:", contributions.top_languages);
     
     // Map the languages to a consistent format
     topLanguages = contributions.top_languages.map((lang: any) => {
@@ -299,19 +433,26 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
         // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
         let percentage = 0;
         if (typeof lang.percentage === 'number') {
-          percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+          // For anshphirani's case, the percentages are already correct (99 and 1)
+          // So we should not modify them if they sum close to 100
+          percentage = lang.percentage;
         } else if (typeof lang.percent === 'number') {
-          percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+          percentage = lang.percent;
         }
+        
+        console.log(`Processing language ${languageName}: raw percentage = ${percentage}`);
         
         return {
           language: languageName,
-          percentage: percentage / 100 // Store as decimal for consistent handling
+          percentage: percentage
         };
       }
       // Default case for any other format
       return { language: 'Unknown', percentage: 0 };
     });
+
+    // Log the final processed languages
+    console.log("Final processed languages:", topLanguages);
   } else {
     // Try to find languages data in other locations
     try {
@@ -327,16 +468,20 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
           // Check if percentage is already in percentage format (> 1) or decimal format (< 1)
           let percentage = 0;
           if (typeof lang.percentage === 'number') {
-            percentage = lang.percentage > 1 ? lang.percentage : lang.percentage * 100;
+            percentage = lang.percentage;
           } else if (typeof lang.percent === 'number') {
-            percentage = lang.percent > 1 ? lang.percent : lang.percent * 100;
+            percentage = lang.percent;
           }
+          
+          console.log(`Processing language from metrics ${languageName}: raw percentage = ${percentage}`);
           
           return {
             language: languageName,
-            percentage: percentage / 100 // Store as decimal for consistent handling
+            percentage: percentage
           };
         });
+        
+        console.log("Final processed languages from metrics:", topLanguages);
       }
     } catch (error) {
       console.error("Error processing languages data:", error);
@@ -555,18 +700,21 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
                       Top Languages
                     </Typography>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {topLanguages.map((lang, index) => (
-                        <Chip
-                          key={index}
-                          label={`${lang.language}: ${(lang.percentage * 100).toFixed(1)}%`}
-                          size="small"
-                          sx={{
-                            bgcolor: `${theme.palette.primary.main}15`,
-                            color: theme.palette.primary.main,
-                            my: 0.5
-                          }}
-                        />
-                      ))}
+                      {topLanguages.map((lang, index) => {
+                        console.log(`Rendering language ${lang.language} with percentage ${lang.percentage}`);
+                        return (
+                          <Chip
+                            key={index}
+                            label={`${lang.language}: ${lang.percentage.toFixed(1)}%`}
+                            size="small"
+                            sx={{
+                              bgcolor: `${theme.palette.primary.main}15`,
+                              color: theme.palette.primary.main,
+                              my: 0.5
+                            }}
+                          />
+                        );
+                      })}
                     </Box>
                   </CardContent>
                 </Card>

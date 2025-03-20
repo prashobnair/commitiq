@@ -126,6 +126,7 @@ def download_report(analysis_id):
         pulls = contributions.get('pulls', 0)
         consistency = contributions.get('consistency', 0)
         reviews = contributions.get('reviews', 0)
+        repos_impact = contributions.get('repos_impact', 0)
         
         # Helper function to determine rating based on value
         def get_rating(value, type_str):
@@ -150,15 +151,68 @@ def download_report(analysis_id):
                 if value > 10: return 'Moderate'
                 return 'Low'
             return 'Moderate'
-            
-        pr_rating = get_rating(pulls, 'prs')
-        commit_rating = get_rating(commits, 'commits')
-        consistency_rating = get_rating(consistency, 'consistency')
         
         developer_name = name or username
         consistency_percent = consistency * 100 if isinstance(consistency, (int, float)) else 0
         
-        developer_summary = f"{developer_name} has made {commits} commits and {pulls} pull requests, showing {pr_rating.lower()} collaboration. Their consistency is {consistency_percent:.1f}%, indicating {consistency_rating.lower()} regular activity. With {reviews} code reviews, they actively engage in code discussions. Overall, they're a {commit_rating.lower()} contributor who {'frequently' if pulls > 30 else 'occasionally'} participates in various projects."
+        # Determine primary language focus if available
+        languageFocus = ""
+        top_languages = contributions.get('top_languages', [])
+        if top_languages and len(top_languages) > 0:
+            topLang = top_languages[0]
+            langName = topLang.get('language', topLang.get('name', ''))
+            if langName:
+                languageFocus = f" with particular focus on {langName} development"
+        
+        # Create a list of key insights, prioritized by importance
+        insights = []
+        
+        # Collaboration style (highest priority)
+        if pulls > 30 and reviews > 20:
+            insights.append(f"{developer_name} demonstrates a highly collaborative approach, actively contributing to team projects and providing thoughtful feedback{languageFocus}")
+        elif pulls > 15 and reviews > 10:
+            insights.append(f"{developer_name} shows good team collaboration skills, regularly contributing to shared codebases{languageFocus}")
+        elif commits > 100 and (pulls < 10 or reviews < 5):
+            insights.append(f"{developer_name} tends to focus on independent development, with strong contribution volume but less emphasis on collaborative workflows{languageFocus}")
+        else:
+            insights.append(f"{developer_name} balances independent work with team collaboration{languageFocus}")
+        
+        # Consistency and reliability (medium priority)
+        if consistency > 0.8:
+            insights.append("Their highly consistent activity pattern indicates strong reliability and sustained engagement over time")
+        elif consistency > 0.6:
+            insights.append("They maintain good consistency in their development work, suggesting reliable engagement")
+        elif consistency > 0.4:
+            insights.append("Their moderate consistency suggests periodic focused engagement rather than continuous development")
+        elif commits > 50:
+            insights.append("Their engagement pattern shows variability, potentially indicating project-based work rather than ongoing maintenance")
+        
+        # Code quality focus (medium priority)
+        if reviews > commits * 0.3:
+            insights.append("Their significant focus on code reviews demonstrates a commitment to code quality and mentorship")
+        elif reviews > commits * 0.1:
+            insights.append("They regularly participate in code reviews, showing attention to quality and collaborative improvement")
+        elif reviews > 10:
+            insights.append("They occasionally engage in code review processes, providing some quality oversight")
+        
+        # Project impact (lower priority)
+        if repos_impact > 0.05:
+            insights.append("Their contributions demonstrate significant impact across repositories, suggesting influence on important projects")
+        elif repos_impact > 0.02 and commits > 50:
+            insights.append("They show meaningful impact on the repositories they contribute to")
+        
+        # Limit to the most important 4 insights
+        summaryText = ""
+        maxSentences = 4
+        sentenceCount = 0
+        
+        for i in range(min(len(insights), maxSentences)):
+            if summaryText:
+                summaryText += " "
+            summaryText += insights[i] + "."
+            sentenceCount += 1
+        
+        developer_summary = summaryText
         
         # Determine overall rating
         impact_score = float(analysis['impact_score']) if analysis['impact_score'] else 0.0
@@ -175,35 +229,92 @@ def download_report(analysis_id):
             overall_rating = 'Exceptional Contributor'
             
         # Determine strengths and considerations
-        strengths = []
-        considerations = []
+        allStrengths = []
+        allConsiderations = []
         
-        # Analyze strengths
-        if pulls > 30:
-            strengths.append('High number of pull requests, indicating strong collaboration')
-        if consistency > 0.7:
-            strengths.append(f'Excellent consistency ({consistency_percent:.1f}% active days)')
-        if reviews > 20:
-            strengths.append('Frequent code reviews, showing willingness to provide feedback')
-        if commits > 200:
-            strengths.append('Significant number of commits, demonstrating active development')
+        # Analyze collaboration patterns
+        if pulls > 30 and commits > 100:
+            allStrengths.append('Strong balance of code contribution and collaborative development through pull requests')
+        elif pulls > 20:
+            allStrengths.append('Demonstrates effective collaborative workflow through regular pull request contributions')
+        elif commits > 200 and pulls > 10:
+            allStrengths.append('High volume of code contributions with moderate collaborative engagement')
+        
+        # Analyze consistency patterns
+        if consistency > 0.8:
+            allStrengths.append('Exceptional consistency in development activity, suggesting strong reliability and sustained engagement')
+        elif consistency > 0.6:
+            allStrengths.append('Maintains good consistency in development work, indicating reliable contribution patterns')
+        elif consistency < 0.4 and commits > 100:
+            allConsiderations.append('Contributions tend to be concentrated in intense periods rather than consistent engagement')
+        
+        # Analyze code quality focus
+        if reviews > 30:
+            allStrengths.append('Strong commitment to code quality through frequent and detailed code reviews')
+        elif reviews > 15:
+            allStrengths.append('Regular participation in code review processes, demonstrating attention to quality')
+        elif commits > 100 and reviews < 5:
+            allConsiderations.append('Limited engagement in code review processes compared to contribution volume')
+        
+        # Analyze specialization and focus areas
+        if top_languages and len(top_languages) > 0:
+            topLang = top_languages[0]
+            langName = topLang.get('language', topLang.get('name', ''))
+            if langName:
+                allStrengths.append(f'Demonstrates strong specialization in {langName} development')
             
-        # Analyze considerations
-        repos_impact = contributions.get('repos_impact', 0)
-        if repos_impact < 0.03:
-            considerations.append('Lower repository impact score—contributions may be in less popular repos')
-        if pulls < 10 and commits > 100:
-            considerations.append('High commits but low PRs may indicate solo work rather than collaboration')
-        if consistency < 0.5:
-            considerations.append('Inconsistent contribution pattern may indicate sporadic engagement')
+            # Check for language diversity
+            if len(top_languages) >= 3:
+                allStrengths.append('Versatile across multiple programming languages, suggesting adaptability to different technical requirements')
+        else:
+            allConsiderations.append('Limited data on language specialization, making it difficult to assess technical focus areas')
+        
+        # Analyze project impact
+        if repos_impact > 0.05:
+            allStrengths.append('Significant impact on project repositories, suggesting meaningful contributions to important codebases')
+        elif repos_impact < 0.02 and commits > 100:
+            allConsiderations.append('Contributions may be spread across many repositories or focused on less central codebases')
+        
+        # Analyze repository contribution patterns
+        top_repositories = contributions.get('top_repositories', [])
+        if top_repositories and len(top_repositories) > 0:
+            hasHighStarRepo = any(repo.get('stars', 0) > 100 for repo in top_repositories)
+            if hasHighStarRepo:
+                allStrengths.append('Experience contributing to popular, widely-used repositories')
             
+            hasHighImpactContributions = any(
+                repo.get('impact_score', 0) > 0.05 or 
+                (
+                    isinstance(repo.get('num_commits', ''), str) and 
+                    any(float(match) > 10 for match in [num.strip('%') for num in repo.get('num_commits', '').split() if num.strip('%').replace('.', '', 1).isdigit()])
+                )
+                for repo in top_repositories
+            )
+            
+            if hasHighImpactContributions:
+                allStrengths.append('Demonstrated ability to make significant contributions to individual projects')
+        
         # Ensure we have at least one strength
-        if not strengths:
-            strengths.append('Shows engagement with GitHub projects')
-            
-        # If no considerations, add a neutral one
-        if not considerations:
-            considerations.append('No significant concerns identified in the contribution pattern')
+        if not allStrengths:
+            if commits > 0 or pulls > 0:
+                allStrengths.append('Shows engagement with GitHub projects, demonstrating basic version control competence')
+            else:
+                allStrengths.append('Has established a GitHub presence, though activity metrics are limited')
+        
+        # If no considerations, add an appropriate one
+        if not allConsiderations:
+            if consistency < 0.7 and consistency > 0.4:
+                allConsiderations.append('Moderate consistency in development activity may indicate varying engagement levels over time')
+            elif pulls < 20 and reviews < 15 and pulls > 0:
+                allConsiderations.append('Could benefit from increased engagement with collaborative development workflows')
+            elif commits < 50 and pulls < 10:
+                allConsiderations.append('Limited volume of public GitHub activity, which may not fully represent technical capabilities')
+            else:
+                allConsiderations.append('No significant concerns identified in the contribution pattern')
+        
+        # Prioritize and limit strengths and considerations to 3 each
+        strengths = allStrengths[:3]
+        considerations = allConsiderations[:3]
             
         # Extract top languages and repositories
         top_languages = contributions.get('top_languages', [])
@@ -330,8 +441,6 @@ def download_report(analysis_id):
                 lang_percentage = 0
                 if 'percentage' in lang:
                     lang_percentage = lang['percentage']
-                    if lang_percentage <= 1:
-                        lang_percentage *= 100
                 elif 'percent' in lang:
                     lang_percentage = lang['percent']
                     if lang_percentage <= 1:
