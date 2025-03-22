@@ -27,7 +27,7 @@
   },
   "scripts": {
     "start": "dotenv -e ../.env react-scripts start",
-    "build": "dotenv -e ../.env react-scripts build",
+    "build": "REACT_APP_API_URL=$REACT_APP_API_URL react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "lint": "eslint src --ext .ts,.tsx",
