@@ -2,7 +2,7 @@ services:
   - type: web
     name: commitiq-api
     env: python
-    repo: https://github.com/yourusername/commitiq.git
+    repo: https://github.com/prashobnair/commitiq.git
     directory: backend
     buildCommand: |
       apt-get update && apt-get install -y wkhtmltopdf fontconfig libfontconfig1 libfreetype6 libpng16-16 libjpeg-turbo8 libxrender1 libx11-6 libxext6 libcairo2 libpango-1.0-0 && 
@@ -50,7 +50,7 @@ services:
   - type: web
     name: commitiq-frontend
     env: static
-    repo: https://github.com/yourusername/commitiq.git
+    repo: https://github.com/prashobnair/commitiq.git
     directory: frontend
     buildCommand: chmod +x build.sh && ./build.sh
     staticPublishPath: ./build
