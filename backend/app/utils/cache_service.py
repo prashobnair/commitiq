@@ -26,12 +26,33 @@ class CacheService:
     
     def _init_redis(self):
         """Initialize Redis connection with error handling."""
+        # Check if Redis is explicitly disabled via environment variable
+        redis_enabled = os.environ.get('REDIS_ENABLED', 'true').lower() == 'true'
+        
+        if not redis_enabled:
+            logger.info("Redis explicitly disabled by REDIS_ENABLED environment variable. Using in-memory cache.")
+            self.redis_available = False
+            self.redis_client = None
+            return
+            
         try:
-            self.redis_client = redis.Redis(host='localhost', port=6379, db=0)
+            # Get Redis connection details from environment or use defaults
+            redis_host = os.environ.get('REDIS_HOST', 'localhost')
+            redis_port = int(os.environ.get('REDIS_PORT', 6379))
+            redis_db = int(os.environ.get('REDIS_DB', 0))
+            redis_password = os.environ.get('REDIS_PASSWORD', None)
+            
+            # Connect to Redis
+            self.redis_client = redis.Redis(
+                host=redis_host, 
+                port=redis_port, 
+                db=redis_db,
+                password=redis_password
+            )
             # Test Redis connection
             self.redis_client.ping()
             self.redis_available = True
-            logger.info("Redis cache available")
+            logger.info(f"Redis cache available at {redis_host}:{redis_port}")
         except (ImportError, redis.exceptions.ConnectionError) as e:
             self.redis_available = False
             self.redis_client = None

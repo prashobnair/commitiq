@@ -4,7 +4,9 @@ services:
     env: python
     repo: https://github.com/prashobnair/commitiq.git
     directory: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      apt-get update && apt-get install -y wkhtmltopdf fontconfig libfontconfig1 libfreetype6 libpng16-16 libjpeg-turbo8 libxrender1 libx11-6 libxext6 libcairo2 libpango-1.0-0 && 
+      pip install -r requirements.txt
     startCommand: python init_db.py && hypercorn run:app --bind 0.0.0.0:$PORT
     plan: free
     envVars:
@@ -42,11 +44,13 @@ services:
         generateValue: true
       - key: GITHUB_TOKEN
         sync: false
+      - key: REDIS_ENABLED
+        value: false
 
   - type: web
     name: commitiq-frontend
     env: static
-    repo: https://github.com/yourusername/commitiq.git
+    repo: https://github.com/prashobnair/commitiq.git
     directory: frontend
     buildCommand: chmod +x build.sh && ./build.sh
     staticPublishPath: ./build
