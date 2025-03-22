@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: commitiq-api
+    env: python
+    repo: https://github.com/prashobnair/commitiq.git
+    directory: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python init_db.py && hypercorn run:app --bind 0.0.0.0:$PORT
+    plan: free
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: run.py
+      - key: PORT
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: DB_HOST
+        fromDatabase:
+          name: commitiq-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: commitiq-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: commitiq-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: commitiq-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: commitiq-db
+          property: password
+      - key: FRONTEND_URL
+        value: https://commitiq-frontend.onrender.com
+      - key: EMAIL_HASH_PEPPER
+        generateValue: true
+      - key: GITHUB_TOKEN
+        sync: false
+
+  - type: web
+    name: commitiq-frontend
+    env: static
+    repo: https://github.com/yourusername/commitiq.git
+    directory: frontend
+    buildCommand: chmod +x build.sh && ./build.sh
+    staticPublishPath: ./build
+    plan: free
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: REACT_APP_API_URL
+        value: https://commitiq-api.onrender.com/api
+
+databases:
+  - name: commitiq-db
+    plan: free
+    databaseName: github_data
+    user: commitiq 

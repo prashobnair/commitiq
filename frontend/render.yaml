@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: commitiq-frontend
+    env: static
+    buildCommand: chmod +x build.sh && ./build.sh
+    staticPublishPath: ./build
+    plan: free
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: REACT_APP_API_URL
+        value: https://commitiq-api.onrender.com/api 
