@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "CommitIQ",
+  "name": "CommitIQ - Identify Top Engineering Talent Instantly",
   "icons": [
     {
       "src": "favicon.ico",
@@ -8,18 +8,24 @@
       "type": "image/x-icon"
     },
     {
-      "src": "logo192.png",
+      "src": "icons/android-chrome-192x192.png",
       "type": "image/png",
       "sizes": "192x192"
     },
     {
-      "src": "logo512.png",
+      "src": "icons/android-chrome-512x512.png",
       "type": "image/png",
       "sizes": "512x512"
+    },
+    {
+      "src": "icons/apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180",
+      "purpose": "apple-touch-icon"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
+  "theme_color": "#171923",
   "background_color": "#ffffff"
 }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#171923" rx="64" />
+  
+  <!-- Grid of 4 squares -->
+  <g transform="translate(128, 128) scale(0.5)">
+    <!-- Top Row -->
+    <rect x="0" y="0" width="240" height="240" fill="#4299E1" rx="24"/>
+    <rect x="272" y="0" width="240" height="240" fill="#4299E1" rx="24"/>
+    
+    <!-- Bottom Row -->
+    <rect x="0" y="272" width="240" height="240" fill="#4299E1" rx="24" opacity="0.7"/>
+    <rect x="272" y="272" width="240" height="240" fill="#4299E1" rx="24" opacity="0.7"/>
+  </g>
+  
+  <!-- IQ Text Overlay -->
+  <text x="256" y="304" font-family="Arial, sans-serif" font-size="140" font-weight="bold" fill="white" text-anchor="middle">IQ</text>
+</svg> 
