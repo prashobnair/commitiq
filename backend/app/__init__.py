@@ -113,16 +113,15 @@ def create_app(test_config=None):
     # Register CLI commands
     register_commands(app)
     
-    # Set up CORS
-    if os.environ.get('FLASK_ENV') == 'development':
-        # In development, allow all origins
-        CORS(app, resources={r"/api/*": {"origins": "*"}})
-        logger.info("CORS configured for development (all origins allowed)")
-    else:
-        # In production, only allow requests from the frontend URL
-        frontend_url = os.environ.get('FRONTEND_URL', 'https://commitiq-frontend.onrender.com')
-        CORS(app, resources={r"/api/*": {"origins": frontend_url}})
-        logger.info(f"CORS configured for production (restricted to: {frontend_url})")
+    # Update CORS configuration to be more specific for production
+    cors = CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "https://commitiq.ai",
+                "https://www.commitiq.ai"
+            ]
+        }
+    })
     
     # Register blueprints
     app.register_blueprint(api_bp, url_prefix='/api')
