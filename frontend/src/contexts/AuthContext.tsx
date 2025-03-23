@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import logger from '../utils/logger';
 
 interface User {
   email: string | null;
@@ -26,7 +27,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       try {
         return JSON.parse(savedUser);
       } catch (error) {
-        console.error('Error parsing saved user data:', error);
+        logger.error('Error parsing saved user data:', error);
         return null;
       }
     }

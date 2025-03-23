@@ -15,12 +15,34 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
+// Safe logging wrapper that prevents sensitive data exposure in production
+const safeLogger = {
+  log: (message, ...args) => {
+    // In production, we don't log detailed information
+    if (process.env.NODE_ENV === 'production') {
+      // SECURITY: Console log removed to prevent data exposure
+      return;
+    }
+    console.log(message, ...args);
+  },
+  
+  error: (message, ...args) => {
+    // Even in production, we log errors but sanitize sensitive data
+    if (process.env.NODE_ENV === 'production') {
+      // Only log the error message, not the detailed args which could contain sensitive data
+      console.error(message);
+    } else {
+      console.error(message, ...args);
+    }
+  }
+};
+
 // Ensure arguments are provided
 const url = process.argv[2];
 const outputPath = process.argv[3];
 
 if (!url || !outputPath) {
-    console.error('Usage: node pdf_generator.js <url> <output_path>');
+    safeLogger.error('Usage: node pdf_generator.js <url> <output_path>');
     process.exit(1);
 }
 
@@ -29,13 +51,13 @@ const optimizedGeneratorPath = path.join(__dirname, 'backend', 'app', 'utils', '
 
 // Check if the optimized generator exists
 if (!fs.existsSync(optimizedGeneratorPath)) {
-    console.error(`Optimized PDF generator not found at ${optimizedGeneratorPath}`);
+    safeLogger.error(`Optimized PDF generator not found at ${optimizedGeneratorPath}`);
     process.exit(1);
 }
 
-console.log(`Using optimized PDF generator from: ${optimizedGeneratorPath}`);
-console.log(`Generating PDF for: ${url}`);
-console.log(`Output path: ${outputPath}`);
+safeLogger.log(`Using optimized PDF generator from: ${optimizedGeneratorPath}`);
+safeLogger.log(`Generating PDF for: ${url}`);
+safeLogger.log(`Output path: ${outputPath}`);
 
 // Run the optimized generator
 const generator = spawn('node', [optimizedGeneratorPath, url, outputPath], {
@@ -44,10 +66,10 @@ const generator = spawn('node', [optimizedGeneratorPath, url, outputPath], {
 
 generator.on('close', (code) => {
     if (code !== 0) {
-        console.error(`PDF generation failed with code ${code}`);
+        safeLogger.error(`PDF generation failed with code ${code}`);
         process.exit(code);
     } else {
-        console.log(`PDF generated successfully: ${outputPath}`);
+        safeLogger.log(`PDF generated successfully: ${outputPath}`);
         process.exit(0);
     }
 }); 

@@ -106,24 +106,48 @@ const PRINT_CSS = `
     }
 `;
 
+// Safe logging wrapper that prevents sensitive data exposure in production
+const safeLogger = {
+  log: (message, ...args) => {
+    // In production, we don't log detailed information
+    if (process.env.NODE_ENV === 'production') {
+      // SECURITY: Console log removed to prevent data exposure
+      return;
+    }
+    console.log(message, ...args);
+  },
+  
+  error: (message, ...args) => {
+    // Even in production, we log errors but sanitize sensitive data
+    if (process.env.NODE_ENV === 'production') {
+      // Only log the error message, not the detailed args which could contain sensitive data
+      console.error(message);
+    } else {
+      console.error(message, ...args);
+    }
+  }
+};
+
 async function generatePDF() {
     const startTime = performance.now();
-    console.log(`Starting PDF generation for ${url}`);
-    console.log(`Output path: ${outputPath}`);
+    safeLogger.log(`Starting PDF generation for ${url}`);
+    safeLogger.log(`Output path: ${outputPath}`);
     
     let browser = null;
     
     try {
         // Launch browser
-        console.log('Launching browser...');
+        safeLogger.log('Launching browser...');
         browser = await puppeteer.launch(BROWSER_OPTIONS);
         
         // Create a new page
         const page = await browser.newPage();
         
         // Set up logging if needed
-        page.on('console', msg => console.log(`PAGE LOG: ${msg.text()}`));
-        page.on('pageerror', error => console.log(`PAGE ERROR: ${error.message}`));
+        if (process.env.NODE_ENV !== 'production') {
+          page.on('console', msg => safeLogger.log(`PAGE LOG: ${msg.text()}`));
+          page.on('pageerror', error => safeLogger.log(`PAGE ERROR: ${error.message}`));
+        }
         
         // Set viewport size
         await page.setViewport({
@@ -133,7 +157,7 @@ async function generatePDF() {
         });
         
         // Navigate to the page
-        console.log(`Navigating to ${url}...`);
+        safeLogger.log(`Navigating to ${url}...`);
         await page.goto(url, { 
             waitUntil: 'networkidle0',
             timeout: PAGE_SETTINGS.navigationTimeout
@@ -143,12 +167,12 @@ async function generatePDF() {
         await page.addStyleTag({ content: PRINT_CSS });
         
         // Wait for any client-side rendering to complete
-        console.log('Waiting for rendering to complete...');
+        safeLogger.log('Waiting for rendering to complete...');
         await Promise.race([
             page.waitForFunction(
                 'typeof window.__NEXT_HYDRATED__ !== "undefined" || document.readyState === "complete"', 
                 { timeout: 10000 }
-            ).catch(() => console.log('No hydration flag found, proceeding anyway')),
+            ).catch(() => safeLogger.log('No hydration flag found, proceeding anyway')),
             new Promise(resolve => setTimeout(resolve, PAGE_SETTINGS.waitTimeMs))
         ]);
         
@@ -213,7 +237,7 @@ async function generatePDF() {
         });
         
         // Generate PDF
-        console.log('Generating PDF...');
+        safeLogger.log('Generating PDF...');
         await page.pdf({
             path: outputPath,
             format: 'Letter',
@@ -239,22 +263,22 @@ async function generatePDF() {
         if (fs.existsSync(outputPath)) {
             const stats = fs.statSync(outputPath);
             const endTime = performance.now();
-            console.log(`PDF generated successfully at ${outputPath}`);
-            console.log(`File size: ${(stats.size / 1024).toFixed(2)} KB`);
-            console.log(`Generation time: ${((endTime - startTime) / 1000).toFixed(2)} seconds`);
+            safeLogger.log(`PDF generated successfully at ${outputPath}`);
+            safeLogger.log(`File size: ${(stats.size / 1024).toFixed(2)} KB`);
+            safeLogger.log(`Generation time: ${((endTime - startTime) / 1000).toFixed(2)} seconds`);
             
             await browser.close();
             process.exit(0);
         } else {
-            console.error(`PDF file was not created at ${outputPath}`);
+            safeLogger.error(`PDF file was not created at ${outputPath}`);
             await browser.close();
             process.exit(1);
         }
         
     } catch (error) {
-        console.error(`Error generating PDF: ${error.message}`);
-        if (error.stack) {
-            console.error(error.stack);
+        safeLogger.error(`Error generating PDF: ${error.message}`);
+        if (process.env.NODE_ENV !== 'production') {
+          safeLogger.error(error.stack);
         }
         
         if (browser) {
