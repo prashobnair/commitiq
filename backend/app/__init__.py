@@ -117,8 +117,8 @@ def create_app(test_config=None):
     cors = CORS(app, resources={
         r"/api/*": {
             "origins": [
-                "https://commitiq.ai",
-                "https://www.commitiq.ai"
+                "https://localhost:3000",
+                "http://localhost:3000"
             ]
         }
     })

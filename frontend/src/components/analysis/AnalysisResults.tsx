@@ -120,6 +120,12 @@ const emptyContributions: Contributions = {
 
 // Helper function to generate a summary of the developer's profile
 const generateSummary = (data: AnalysisResponse): string => {
+  // Check if impact score is 0 - special case
+  if (data.impact_score === 0) {
+    const developerName = data.analysis.name || data.analysis.username;
+    return `${developerName} has no measurable GitHub activity in our analysis period. This could mean they're new to GitHub, work primarily in private repositories, or contribute through other means not captured in our analysis.`;
+  }
+  
   // Extract contribution data from the correct location in the response
   const contributions = data.analysis.contributions || emptyContributions;
   const pulls = contributions.pulls;

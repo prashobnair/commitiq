@@ -172,6 +172,14 @@ def generate_pdf_report(analysis):
     reviews = contributions.get('reviews', 0)
     repos_impact = contributions.get('repos_impact', 0)
     
+    # Check if impact score is 0 - special case
+    impact_score = float(analysis['impact_score']) if analysis['impact_score'] else 0.0
+    if impact_score == 0:
+        developer_name = name or username
+        developer_summary = f"{developer_name} has no measurable GitHub activity in our analysis period. This could mean they're new to GitHub, work primarily in private repositories, or contribute through other means not captured in our analysis."
+        return create_pdf(username, impact_score, developer_summary, commits, pulls, contributions.get('issues', 0), 
+                         reviews, int(consistency * 100), int(repos_impact * 100), [], [], [], 'Developing Contributor')
+    
     # Helper function to determine rating based on value
     def get_rating(value, type_str):
         if type_str == 'prs':
@@ -259,7 +267,6 @@ def generate_pdf_report(analysis):
     developer_summary = summaryText
     
     # Determine overall rating
-    impact_score = float(analysis['impact_score']) if analysis['impact_score'] else 0.0
     overall_rating = 'Exceptional Contributor'
     if impact_score <= 40:
         overall_rating = 'Developing Contributor'
