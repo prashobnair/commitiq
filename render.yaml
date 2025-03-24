@@ -55,6 +55,10 @@ services:
     buildCommand: chmod +x build.sh && ./build.sh
     staticPublishPath: ./build
     plan: free
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: NODE_VERSION
         value: 18.x
