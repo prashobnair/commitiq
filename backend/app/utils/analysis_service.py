@@ -252,7 +252,7 @@ class AnalysisService:
             logger.info(f"User data exists: {user_data is not None} for username: {username}")
             if user_data is None:
                 logger.error(f"User data is None for username: {username}. GitHub data structure: {list(github_data.keys()) if isinstance(github_data, dict) else type(github_data)}")
-                return {'error': 'Unable to analyze profile at this time'}
+                return {'error': 'No user found for username: ' + username}
                 
             if not user_data:
                 logger.error(f"User data is empty for username: {username}")

@@ -130,6 +130,11 @@ def analyze_user_post():
         github_data = analysis_service.fetch_all_data(normalized_username)
         logger.debug(f"Github data fetched for {normalized_username}, data type: {type(github_data)}")
         
+        # Check if the user was not found
+        if github_data['user'] == None:
+            error_response = {'error': "User not found"}
+            return jsonify(error_response), 404
+        
         # Check for errors in github_data
         if 'error' in github_data:
             logger.error(f"Error during github data fetching for {normalized_username}: {github_data['error']} from IP: {request.remote_addr}")
@@ -145,7 +150,6 @@ def analyze_user_post():
                     'user_agent': request.headers.get('User-Agent')
                 }
             )
-            
             return jsonify(error_response), 500
             
         # Process the github data using analysis service
@@ -244,7 +248,6 @@ def analyze_user_post():
             )
         except Exception as track_err:
             logger.error(f"Failed to track analysis error for {normalized_username}: {track_err}")
-            
         return jsonify(error_response), 500
 
 @analysis_bp.route('/analyze/<username>', methods=['GET'])

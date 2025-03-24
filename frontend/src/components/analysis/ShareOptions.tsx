@@ -16,6 +16,7 @@ import {
   Email as EmailIcon,
 } from '@mui/icons-material';
 import { API_BASE_URL } from '../../config';
+import logger from '../../utils/logger';
 
 interface ShareOptionsProps {
   analysisId: number;
@@ -43,7 +44,7 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
       setSnackbarSeverity('success');
       setSnackbarOpen(true);
     } catch (error) {
-      console.error('Error creating share link:', error);
+      logger.error('Error creating share link:', error);
       setSnackbarMessage('Failed to create share link. Please try again.');
       setSnackbarSeverity('error');
       setSnackbarOpen(true);
@@ -66,7 +67,7 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
         setSnackbarOpen(true);
       })
       .catch((error) => {
-        console.error('Error copying to clipboard:', error);
+        logger.error('Error copying to clipboard:', error);
         setSnackbarMessage('Failed to copy link. Please try again.');
         setSnackbarSeverity('error');
         setSnackbarOpen(true);

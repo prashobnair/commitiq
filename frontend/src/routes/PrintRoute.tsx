@@ -1,6 +1,7 @@
 import React from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import PrintPage from '../pages/print/[username]';
+import logger from '../utils/logger';
 
 /**
  * Wrapper component for the Next.js style Print page
@@ -13,7 +14,9 @@ const PrintRoute: React.FC = () => {
   const searchParams = new URLSearchParams(location.search);
   const id = searchParams.get('id');
   
-  console.log(`Rendering print page for username: ${username}, id: ${id}`);
+  // SECURITY: Console log removed to prevent data exposure
+  // console.log(`Rendering print page for username: ${username}, id: ${id}`);
+  //logger.log('Rendering print page', { username, id });
   
   // If we don't have both username and id, show an error
   if (!username || !id) {

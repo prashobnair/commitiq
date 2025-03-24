@@ -4,6 +4,7 @@ import { Box, Container, Typography, CircularProgress, Paper, Grid } from '@mui/
 import { API_BASE_URL } from '../../config';
 import { AnalysisResponse, Analysis, Contributions } from '../../types/analysis';
 import { Head } from '../../utils/nextShims';
+import logger from '../../utils/logger';
 
 // Dynamic imports for print components to avoid module resolution issues
 const PrintHeader = lazy(() => import('../../components/print/PrintHeader'));
@@ -163,7 +164,7 @@ const PrintPage: React.FC = () => {
         const data = await response.json();
         setAnalysis(data);
       } catch (err) {
-        console.error('Error fetching analysis:', err);
+        logger.error('Error fetching analysis:', err);
         setError('Failed to load analysis data');
       } finally {
         setLoading(false);
