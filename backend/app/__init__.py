@@ -114,12 +114,16 @@ def create_app(test_config=None):
     register_commands(app)
     
     # Update CORS configuration to be more specific for production
+    # Read CORS origins from environment variables for easier development/production switching
+    cors_origins_env = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,https://localhost:3000')
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(',')]
+    
+    # Log the CORS origins for debugging
+    logger.info(f"Configuring CORS with origins: {cors_origins}")
+    
     cors = CORS(app, resources={
         r"/api/*": {
-            "origins": [
-                "https://localhost:3000",
-                "http://localhost:3000"
-            ]
+            "origins": cors_origins
         }
     })
     
