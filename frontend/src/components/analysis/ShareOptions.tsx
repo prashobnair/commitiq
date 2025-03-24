@@ -17,6 +17,7 @@ import {
 } from '@mui/icons-material';
 import { API_BASE_URL } from '../../config';
 import logger from '../../utils/logger';
+import { trackEvent } from '../../utils/analytics';
 
 interface ShareOptionsProps {
   analysisId: number;
@@ -38,6 +39,13 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
       const host = window.location.origin;
       const shareUrl = `${host}/shared/${githubUsername}`;
       
+      // Track share action in Google Analytics
+      trackEvent(
+        'Sharing',
+        'Created Share Link',
+        githubUsername
+      );
+      
       setShareLink(shareUrl);
       setShareLinkDialogOpen(true);
       setSnackbarMessage('Share link created successfully!');
@@ -45,6 +53,14 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
       setSnackbarOpen(true);
     } catch (error) {
       logger.error('Error creating share link:', error);
+      
+      // Track error in Google Analytics
+      trackEvent(
+        'Error',
+        'Share Link Creation Failed',
+        githubUsername
+      );
+      
       setSnackbarMessage('Failed to create share link. Please try again.');
       setSnackbarSeverity('error');
       setSnackbarOpen(true);
@@ -54,6 +70,13 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   };
   
   const handleDownload = () => {
+    // Track PDF download in Google Analytics
+    trackEvent(
+      'Analysis',
+      'PDF Download',
+      githubUsername
+    );
+    
     // Use username-based approach instead of analysis ID to handle placeholder IDs
     // This ensures downloads work even if the analysis hasn't been fully stored in the database yet
     window.open(`${API_BASE_URL}/download/report?username=${encodeURIComponent(githubUsername)}&format=pdf`, '_blank');
@@ -62,12 +85,27 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   const handleCopyToClipboard = () => {
     navigator.clipboard.writeText(shareLink)
       .then(() => {
+        // Track copy action in Google Analytics
+        trackEvent(
+          'Sharing',
+          'Copied Share Link',
+          githubUsername
+        );
+        
         setSnackbarMessage('Link copied to clipboard!');
         setSnackbarSeverity('success');
         setSnackbarOpen(true);
       })
       .catch((error) => {
         logger.error('Error copying to clipboard:', error);
+        
+        // Track error in Google Analytics
+        trackEvent(
+          'Error',
+          'Copy Link Failed',
+          githubUsername
+        );
+        
         setSnackbarMessage('Failed to copy link. Please try again.');
         setSnackbarSeverity('error');
         setSnackbarOpen(true);
@@ -75,6 +113,13 @@ const ShareOptions: React.FC<ShareOptionsProps> = ({ analysisId, githubUsername 
   };
   
   const handleEmailShare = () => {
+    // Track email share action in Google Analytics
+    trackEvent(
+      'Sharing',
+      'Email Share',
+      githubUsername
+    );
+    
     const subject = encodeURIComponent(`CommitIQ Analysis for ${githubUsername}`);
     const body = encodeURIComponent(`Check out this GitHub analysis of ${githubUsername} conducted with CommitIQ:\n\n${shareLink}`);
     window.open(`mailto:?subject=${subject}&body=${body}`);
