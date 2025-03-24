@@ -15,6 +15,7 @@ import {
   Alert,
 } from '@mui/material';
 import { Close as CloseIcon } from '@mui/icons-material';
+import { trackEvent } from '../../utils/analytics';
 
 // API URL - should be in an environment variable in production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -81,6 +82,13 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
         throw new Error(data.error || 'Failed to join waiting list');
       }
 
+      // Track successful waitlist signup in Google Analytics
+      trackEvent(
+        'Waitlist',
+        'Signup',
+        company ? `Company: ${company}` : 'Individual'
+      );
+
       // Handle different response statuses
       if (data.status === 'already_joined') {
         setMessage(data.message);
@@ -95,6 +103,13 @@ const WaitingListModal: React.FC<WaitingListModalProps> = ({ open, onClose }) =>
       setCompany('');
       setFeedback('');
     } catch (err) {
+      // Track errors in Google Analytics
+      trackEvent(
+        'Error',
+        'Waitlist Signup Failed',
+        err instanceof Error ? err.message : 'Unknown error'
+      );
+      
       setError(err instanceof Error ? err.message : 'Failed to join waiting list. Please try again.');
     } finally {
       setLoading(false);
