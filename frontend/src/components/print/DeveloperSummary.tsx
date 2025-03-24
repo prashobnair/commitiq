@@ -42,11 +42,30 @@ const DeveloperSummary: React.FC<DeveloperSummaryProps> = ({
     return 'moderate';
   };
 
+  const developerName = name || username;
+  
+  // Check if this is a zero-activity profile
+  if (commits === 0 && pulls === 0 && reviews === 0) {
+    // Special case for users with no activity
+    const summary = `${developerName} has no measurable GitHub activity in our analysis period. This could mean they're new to GitHub, work primarily in private repositories, or contribute through other means not captured in our analysis.`;
+    
+    return (
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Developer Summary
+        </Typography>
+        
+        <Typography variant="body1">
+          {summary}
+        </Typography>
+      </Box>
+    );
+  }
+
+  // For normal users with activity
   const prRating = getRating(pulls, 'prs');
   const commitRating = getRating(commits, 'commits');
   const consistencyRating = getRating(consistency, 'consistency');
-  
-  const developerName = name || username;
   const consistencyPercent = consistency * 100;
   
   // Generate summary text

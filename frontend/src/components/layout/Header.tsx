@@ -14,6 +14,7 @@ import {
 import WaitingListModal from '../common/WaitingListModal';
 import logoSrc from '../../logo.svg';
 import { useAnalysisContext } from '../../contexts/AnalysisContext';
+import logger from '../../utils/logger';
 
 // API URL from environment variables
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -35,7 +36,8 @@ const Header: React.FC = () => {
   // Function to handle logo click - reset analysis to return to search
   const handleLogoClick = () => {
     resetAnalysis();
-    console.log('Logo clicked, resetting analysis');
+    // SECURITY: Console log removed to prevent data exposure
+    // logger.log('Logo clicked, resetting analysis');
   };
   
   // Fetch waiting list count when component mounts
@@ -51,7 +53,7 @@ const Header: React.FC = () => {
         setWaitlistCount(data.count);
         setWaitlistMessage(data.message);
       } catch (error) {
-        console.error('Error fetching waitlist count:', error);
+        logger.error('Error fetching waitlist count:', error);
       }
     };
     
@@ -80,7 +82,7 @@ const Header: React.FC = () => {
       setWaitlistCount(data.count);
       setWaitlistMessage(data.message);
     } catch (error) {
-      console.error('Error fetching waitlist count:', error);
+      logger.error('Error fetching waitlist count:', error);
     }
   };
 

@@ -42,6 +42,7 @@ import { AnalysisResponse, MetricCard, Repository, Contributions } from '../../t
 import ShareOptions from './ShareOptions';
 import { useAnalysisContext } from '../../contexts/AnalysisContext';
 import { Link as RouterLink } from 'react-router-dom';
+import logger from '../../utils/logger';
 
 interface Props {
   data: AnalysisResponse;
@@ -120,6 +121,12 @@ const emptyContributions: Contributions = {
 
 // Helper function to generate a summary of the developer's profile
 const generateSummary = (data: AnalysisResponse): string => {
+  // Check if impact score is 0 - special case
+  if (data.impact_score === 0) {
+    const developerName = data.analysis.name || data.analysis.username;
+    return `${developerName} has no measurable GitHub activity in our analysis period. This could mean they're new to GitHub, work primarily in private repositories, or contribute through other means not captured in our analysis.`;
+  }
+  
   // Extract contribution data from the correct location in the response
   const contributions = data.analysis.contributions || emptyContributions;
   const pulls = contributions.pulls;
@@ -342,12 +349,13 @@ const formatDate = (dateString: string | undefined): string => {
 // Helper function to map repository data from backend format to our component format
 const mapRepositories = (repoData: any[]): Repository[] => {
   if (!repoData || !Array.isArray(repoData) || repoData.length === 0) {
-    console.log("No repositories data found");
+    logger.error("No repositories data found");
     return [];
   }
   
   return repoData.map((repo: any) => {
-    console.log("Processing repository:", repo);
+    // SECURITY: Console log removed to prevent data exposure
+    // logger.log("Processing repository:", repo);
     
     // Use the URL if it exists, otherwise construct one from the name
     let repoUrl = repo.url || '#';
@@ -393,7 +401,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
   // Single state to track expanded accordion
   const [expandedAdvancedMetrics, setExpandedAdvancedMetrics] = useState<boolean>(false);
   
-  console.log("Full analysis data:", JSON.stringify(data, null, 2));
+  // SECURITY: Console log removed to prevent data exposure
+  // console.log("Full analysis data:", JSON.stringify(data, null, 2));
 
   // Ensure we have valid data
   if (!data || !data.analysis) {
@@ -408,7 +417,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
 
   // Extract contribution data from the correct location in the response
   const contributions = data.analysis.contributions || emptyContributions;
-  console.log("Contributions data:", JSON.stringify(contributions, null, 2));
+  // SECURITY: Console log removed to prevent data exposure
+  // console.log("Contributions data:", JSON.stringify(contributions, null, 2));
   
   const pulls = contributions.pulls;
   const issues = contributions.issues;
@@ -421,7 +431,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
   let topLanguages: Array<{ language: string; percentage: number }> = [];
   
   if (contributions.top_languages && Array.isArray(contributions.top_languages)) {
-    console.log("Raw top_languages data:", contributions.top_languages);
+    // SECURITY: Console log removed to prevent data exposure
+    // console.log("Raw top_languages data:", contributions.top_languages);
     
     // Map the languages to a consistent format
     topLanguages = contributions.top_languages.map((lang: any) => {
@@ -440,7 +451,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
           percentage = lang.percent;
         }
         
-        console.log(`Processing language ${languageName}: raw percentage = ${percentage}`);
+        // SECURITY: Console log removed to prevent data exposure
+        // console.log(`Processing language ${languageName}: raw percentage = ${percentage}`);
         
         return {
           language: languageName,
@@ -451,8 +463,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
       return { language: 'Unknown', percentage: 0 };
     });
 
-    // Log the final processed languages
-    console.log("Final processed languages:", topLanguages);
+    // SECURITY: Console log removed to prevent data exposure
+    // console.log("Final processed languages:", topLanguages);
   } else {
     // Try to find languages data in other locations
     try {
@@ -461,7 +473,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
       const languagesData = metricsData?.languages;
       
       if (languagesData && Array.isArray(languagesData)) {
-        console.log("Found languages in metrics:", languagesData);
+        // SECURITY: Console log removed to prevent data exposure
+        // console.log("Found languages in metrics:", languagesData);
         topLanguages = languagesData.map((lang: any) => {
           const languageName = lang.language || lang.name || 'Unknown';
           
@@ -473,7 +486,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
             percentage = lang.percent;
           }
           
-          console.log(`Processing language from metrics ${languageName}: raw percentage = ${percentage}`);
+          // SECURITY: Console log removed to prevent data exposure
+          // console.log(`Processing language from metrics ${languageName}: raw percentage = ${percentage}`);
           
           return {
             language: languageName,
@@ -481,32 +495,38 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
           };
         });
         
-        console.log("Final processed languages from metrics:", topLanguages);
+        // SECURITY: Console log removed to prevent data exposure
+        // console.log("Final processed languages from metrics:", topLanguages);
       }
     } catch (error) {
-      console.error("Error processing languages data:", error);
+      logger.error("Error processing languages data:", error);
     }
   }
   
-  console.log("Processed top languages:", topLanguages);
+  // SECURITY: Console log removed to prevent data exposure
+  // console.log("Processed top languages:", topLanguages);
 
   // Map repositories from the contributions data
   let repositories: Repository[] = [];
   
   if (contributions.top_repositories && Array.isArray(contributions.top_repositories)) {
-    console.log("Using top_repositories from contributions:", contributions.top_repositories);
+    // SECURITY: Console log removed to prevent data exposure
+    // console.log("Using top_repositories from contributions:", contributions.top_repositories);
     repositories = mapRepositories(contributions.top_repositories);
   } else if (data.analysis.metrics && data.analysis.metrics.repositories) {
     // Fallback to metrics.repositories if available
-    console.log("Falling back to metrics.repositories");
+    // SECURITY: Console log removed to prevent data exposure
+    // console.log("Falling back to metrics.repositories");
     repositories = mapRepositories(data.analysis.metrics.repositories);
   } else if (data.analysis.repos && Array.isArray(data.analysis.repos)) {
     // Try to use repos directly if other sources are not available
-    console.log("Using repos directly from analysis:", data.analysis.repos);
-    repositories = data.analysis.repos;
+    // SECURITY: Console log removed to prevent data exposure
+    // console.log("Using repos directly from analysis:", data.analysis.repos);
+    repositories = mapRepositories(data.analysis.repos);
   }
   
-  console.log("Final mapped repositories:", repositories);
+  // SECURITY: Console log removed to prevent data exposure
+  // console.log("Final mapped repositories:", repositories);
 
   // Generate summary and insights
   const summary = generateSummary(data);
@@ -701,7 +721,8 @@ const AnalysisResults: React.FC<Props> = ({ data, onJoinWaitingList, isSharedVie
                     </Typography>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                       {topLanguages.map((lang, index) => {
-                        console.log(`Rendering language ${lang.language} with percentage ${lang.percentage}`);
+                        // SECURITY: Console log removed to prevent data exposure
+                        // console.log(`Rendering language ${lang.language} with percentage ${lang.percentage}`);
                         return (
                           <Chip
                             key={index}
