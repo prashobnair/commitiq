@@ -26,32 +26,25 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
 
   const analyzeProfile = useCallback(async (username: string) => {
-    console.log('[AnalysisContext] Starting analysis for:', username);
     if (!username.trim()) return;
 
-    console.log('[AnalysisContext] Setting loading state');
     setLoading(true);
     setError(null);
     
     const { data, error: apiError } = await analyzeGitHubProfile(username.trim());
-    console.log('[AnalysisContext] API response received:', { data: !!data, error: apiError });
     
     if (apiError) {
-      console.log('[AnalysisContext] Setting error state:', apiError);
       setError(apiError);
       setAnalysisData(null);
     } else if (data) {
-      console.log('[AnalysisContext] Setting analysis data');
       setAnalysisData(data);
       setError(null);
     }
     
-    console.log('[AnalysisContext] Analysis complete, clearing loading state');
     setLoading(false);
   }, []);
 
   const resetAnalysis = useCallback(() => {
-    console.log('[AnalysisContext] Resetting analysis state');
     setAnalysisData(null);
     setError(null);
   }, []);
