@@ -35,6 +35,7 @@ import AnalysisResults from './AnalysisResults';
 import LoadingOverlay from '../common/LoadingOverlay';
 import WaitingListModal from '../common/WaitingListModal';
 import { useAnalysisContext } from '../../contexts/AnalysisContext';
+import { trackEvent } from '../../utils/analytics';
 
 // Examples for the placeholder tooltip
 const usernameExamples = [
@@ -53,6 +54,13 @@ const LandingPage: React.FC = () => {
 
   const handleAnalyze = () => {
     if (username.trim()) {
+      // Track GitHub profile analysis
+      trackEvent(
+        'Analysis',
+        'Submitted GitHub Username',
+        username.trim()
+      );
+      
       analyzeProfile(username);
     }
   };
