@@ -1,0 +1,33 @@
+Market,Retailer,Product ID,GTIN,Found (Y/N),Availability status,Product title,Size/variant,Price,URL checked,ZIP used,Notes
+US,AMAZON,B000FKQDDI,19000003058,Y,Listed,"Amazon.com: LIFE SAVERS Breath Mints Sugar Free Candy, Wint-O-Green Mint Hard Candy Bag for Goodie Bags, Road Trips, School, Work, 2.75 oz (Pack of 12)",,,https://www.amazon.com/dp/B000FKQDDI,10001,HTTP 200
+US,AMAZON-FRESH,B07BKDJ9XS,40000525578,Y,Listed,"Amazon.com : SNICKERS Mini Size Milk Chocolate Candy Bars, 9.7 oz Bag : Grocery & Gourmet Food",,,https://www.amazon.com/gp/aw/d/B07BKDJ9XS,10001,HTTP 200
+US,CVS,230355,40000607410,N,Not listed,,,,https://www.cvs.com/search?searchTerm=230355,20001,search-based
+US,GIANT-EAGLE,40000607359,40000607359,Y,Listed,"SNICKERS Minis Milk Chocolate Bars, Sharing Size, 9.7 Oz Candy Bag | Giant Eagle | Because It Matters | Grocery Store & Pharmacy",,,https://www.gianteagle.com/grocery/search/product/00040000607359,15222,search-based
+US,GIANT-EAGLE,40000525509,40000607410,Y,Listed,"TWIX Caramel Minis Size Chocolate Cookie Candy Bar, Sharing Size, 9.7 oz Bag | Giant Eagle | Because It Matters | Grocery Store & Pharmacy",,,https://www.gianteagle.com/grocery/search/product/00040000525509,15222,search-based
+US,GOPUFF,228282,40000607410,N,Not listed,,,,https://www.gopuff.com/search?query=228282,10001,search-based
+US,HEB,15145015,40000607410,Y,Listed,Twix Minis Chocolate Bars - Sharing Size - Shop Candy at H-E-B,,,https://www.heb.com/product-detail/15145015,78701,HTTP 200
+US,HYVEE,2608138,40000525509,N,Not listed,,,,https://www.hy-vee.com/grocery/search?text=2608138,50309,search-based
+US,HYVEE,2602336,40000525578,N,Not listed,,,,https://www.hy-vee.com/grocery/search?text=2602336,50309,search-based
+US,INSTACART-PUBLIX,16295990,19000083425,N,Not listed,,,,https://www.instacart.com/store/publix/s?q=16295990&k=,33130,login may be required
+US,INSTACART-PUBLIX,78733,19000083449,N,Not listed,,,,https://www.instacart.com/store/publix/s?q=78733&k=,33130,login may be required
+US,INSTACART-PUBLIX,20226744,22000280282,N,Not listed,,,,https://www.instacart.com/store/publix/s?q=20226744&k=,33130,login may be required
+US,INSTACART-PUBLIX,18339619,40000525578,N,Not listed,,,,https://www.instacart.com/store/publix/s?q=18339619&k=,33130,login may be required
+US,KROGER,4000052557,40000525578,N,Not listed,,,,chrome-error://chromewebdata/,45202,search-based
+US,KROGER,4000052550,40000525509,N,Not listed,,,,chrome-error://chromewebdata/,45202,search-based
+US,MEIJER,P4000052550,40000525509,N,Not listed,,,,https://www.meijer.com/shopping/search.html?q=40000525509,49503,search-based
+US,MEIJER,P4000052557,40000525578,N,Not listed,,,,https://www.meijer.com/shopping/search.html?q=40000525578,49503,search-based
+US,SAMS-CLUB,4000004432,40000044321,N,Not listed,,,,https://www.samsclub.com/are-you-human?url=L3NlYXJjaD9xPTQwMDAwMDQ0MzIx&uuid=b43553af-b4ae-11f0-b627-7acec7850b00&vid=b492a87a-b4ae-11f0-8ee6-5ea5df0016ec&g=b,30303,search-based
+US,SAMS-CLUB,15366017660,22000104281,N,Not listed,,,,https://www.samsclub.com/are-you-human?url=L3NlYXJjaD9xPTIyMDAwMTA0Mjgx&uuid=b43553af-b4ae-11f0-b627-7acec7850b00&vid=b492a87a-b4ae-11f0-8ee6-5ea5df0016ec&g=b,30303,search-based
+US,SHOPRITE,40000595786,40000595786,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,SHOPRITE,00040000525509,40000525509,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,SHOPRITE,22000297051,22000297051,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,SHOPRITE,2200011693,22000116932,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,SHOPRITE,00040000525578,40000525578,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,SHOPRITE,40000598671,40000598671,N,Not listed,,,,https://www.shoprite.com/,07102,search-based
+US,TARGET,A-53280541,40000525509,Y,Listed,"Twix Caramel Cookie Chocolate Candy Bar, Sharing Size - 9.7oz : Target",,,https://www.target.com/p/-/A-53280541,10001,HTTP 200
+US,TARGET,A-87620145,40000525578,N,Not listed,Target : Expect More. Pay Less.,,,https://www.target.com/p/-/A-87620145,10001,HTTP 404
+US,TARGET,A-90037671,22000297051,N,Not listed,Target : Expect More. Pay Less.,,,https://www.target.com/p/-/A-90037671,10001,HTTP 404
+US,WALGREENS,prod6381251,40000525509,N,Not listed,,,,https://www.walgreens.com/search/results.jsp?Ntt=prod6381251,20001,from GTIN or not found
+US,WALGREENS,300446423,40000598671,N,Not listed,,,,https://www.walgreens.com/search/results.jsp?Ntt=300446423,20001,from GTIN or not found
+US,WALGREENS,PROD6381498,40000525578,N,Not listed,,,,https://www.walgreens.com/search/results.jsp?Ntt=PROD6381498,20001,from GTIN or not found
+US,WALMART,578410887,40000525509,N,Not listed,Robot or human?,,,https://www.walmart.com/blocked?url=L2lwLzU3ODQxMDg4Nw==&uuid=fa7319a5-b4ae-11f0-a6b9-a3264a3aec5b&vid=&g=b,10001,HTTP 200
